@@ -21,27 +21,37 @@ enum FileExporter {
         }
     }
 
+    /// A closure called periodically while the asset is being downloaded from iCloud.
+    /// The `Double` parameter ranges from 0.0 to 1.0.
+    typealias ICloudProgressHandler = @Sendable (Double) -> Void
+
     /// Export `asset` to a temporary file and return the URL.
     /// Triggers an iCloud download if the asset is not locally available.
     /// The caller must delete the file when the upload finishes.
-    static func export(asset: PHAsset) async throws -> URL {
+    static func export(asset: PHAsset, iCloudProgress: ICloudProgressHandler? = nil) async throws -> URL {
         switch asset.mediaType {
         case .image:
-            return try await exportImage(asset: asset)
+            return try await exportImage(asset: asset, iCloudProgress: iCloudProgress)
         case .video:
-            return try await exportVideo(asset: asset)
+            return try await exportVideo(asset: asset, iCloudProgress: iCloudProgress)
         default:
             throw ExportError.unsupportedMediaType
         }
     }
 
-    private static func exportImage(asset: PHAsset) async throws -> URL {
+    private static func exportImage(asset: PHAsset, iCloudProgress: ICloudProgressHandler?) async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
             let options = PHImageRequestOptions()
             options.version = .current
             options.deliveryMode = .highQualityFormat
             options.isNetworkAccessAllowed = true  // allow iCloud download
             options.isSynchronous = false
+
+            if let iCloudProgress {
+                options.progressHandler = { progress, _, _, _ in
+                    iCloudProgress(progress)
+                }
+            }
 
             PHImageManager.default().requestImageDataAndOrientation(for: asset, options: options) { data, uti, _, info in
                 if let error = info?[PHImageErrorKey] as? Error {
@@ -67,12 +77,18 @@ enum FileExporter {
         }
     }
 
-    private static func exportVideo(asset: PHAsset) async throws -> URL {
+    private static func exportVideo(asset: PHAsset, iCloudProgress: ICloudProgressHandler?) async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
             let options = PHVideoRequestOptions()
             options.version = .current
             options.deliveryMode = .highQualityFormat
             options.isNetworkAccessAllowed = true
+
+            if let iCloudProgress {
+                options.progressHandler = { progress, _, _, _ in
+                    iCloudProgress(progress)
+                }
+            }
 
             PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { avAsset, _, info in
                 if let error = info?[PHImageErrorKey] as? Error {

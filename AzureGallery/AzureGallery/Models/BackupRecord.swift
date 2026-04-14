@@ -40,6 +40,10 @@ struct BackupRecord: Identifiable, Sendable {
     var hasText: Bool
     /// SHA-256 content hash for duplicate detection. Nil until the file is exported and hashed.
     var contentHash: String?
+    /// Full OCR text, newline-separated. Nil if no text was recognized.
+    var recognizedText: String?
+    /// JSON-encoded [String] of animal labels detected by Vision.
+    var animalLabels: String?
 
     init(
         assetId: String,
@@ -60,6 +64,8 @@ struct BackupRecord: Identifiable, Sendable {
         self.sceneLabels = nil
         self.hasText = false
         self.contentHash = nil
+        self.recognizedText = nil
+        self.animalLabels = nil
     }
 
     /// Decoded scene labels from the JSON-encoded `sceneLabels` column.
@@ -94,28 +100,32 @@ extension BackupRecord: FetchableRecord {
         createdAt    = row["createdAt"]
         faceCount    = row["faceCount"]
         sceneLabels  = row["sceneLabels"]
-        hasText      = row["hasText"] ?? false
-        contentHash  = row["contentHash"]
+        hasText        = row["hasText"] ?? false
+        contentHash    = row["contentHash"]
+        recognizedText = row["recognizedText"]
+        animalLabels   = row["animalLabels"]
     }
 }
 
 extension BackupRecord: MutablePersistableRecord {
     func encode(to container: inout PersistenceContainer) throws {
-        container["id"]           = id
-        container["assetId"]      = assetId
-        container["blobName"]     = blobName
-        container["size"]         = size
-        container["mediaType"]    = mediaType
-        container["creationDate"] = creationDate
-        container["status"]       = status.rawValue
-        container["retries"]      = retries
-        container["uploadedAt"]   = uploadedAt
-        container["error"]        = error
-        container["createdAt"]    = createdAt
-        container["faceCount"]    = faceCount
-        container["sceneLabels"]  = sceneLabels
-        container["hasText"]      = hasText
-        container["contentHash"]  = contentHash
+        container["id"]             = id
+        container["assetId"]        = assetId
+        container["blobName"]       = blobName
+        container["size"]           = size
+        container["mediaType"]      = mediaType
+        container["creationDate"]   = creationDate
+        container["status"]         = status.rawValue
+        container["retries"]        = retries
+        container["uploadedAt"]     = uploadedAt
+        container["error"]          = error
+        container["createdAt"]      = createdAt
+        container["faceCount"]      = faceCount
+        container["sceneLabels"]    = sceneLabels
+        container["hasText"]        = hasText
+        container["contentHash"]    = contentHash
+        container["recognizedText"] = recognizedText
+        container["animalLabels"]   = animalLabels
     }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {

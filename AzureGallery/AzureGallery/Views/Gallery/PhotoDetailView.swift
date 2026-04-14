@@ -1,6 +1,7 @@
 import SwiftUI
 import Photos
 import MapKit
+import AVKit
 
 struct PhotoDetailView: View {
     let fetchResult: PHFetchResult<PHAsset>
@@ -99,7 +100,7 @@ struct PhotoDetailView: View {
     }
 }
 
-// MARK: - Zoomable image
+// MARK: - Zoomable image / video player
 
 private struct ZoomableImageView: View {
     let asset: PHAsset
@@ -108,11 +109,21 @@ private struct ZoomableImageView: View {
     @State private var offset: CGSize = .zero
     @State private var lastScale: CGFloat = 1
 
+    // Video
+    @State private var player: AVPlayer?
+    @State private var isPlayingVideo = false
+    @State private var loadingVideo = false
+
+    private var isVideo: Bool { asset.mediaType == .video }
+
     var body: some View {
         ZStack {
             Color.clear
 
-            if let image {
+            if isPlayingVideo, let player {
+                VideoPlayer(player: player)
+                    .onDisappear { player.pause() }
+            } else if let image {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
@@ -126,6 +137,26 @@ private struct ZoomableImageView: View {
                             offset = .zero
                         }
                     }
+                    .overlay {
+                        if isVideo {
+                            // Play button overlay for videos
+                            Button {
+                                Task { await playVideo() }
+                            } label: {
+                                if loadingVideo {
+                                    ProgressView()
+                                        .controlSize(.large)
+                                        .tint(.white)
+                                } else {
+                                    Image(systemName: "play.circle.fill")
+                                        .font(.system(size: 64))
+                                        .foregroundStyle(.white.opacity(0.9))
+                                        .shadow(radius: 10)
+                                }
+                            }
+                            .disabled(loadingVideo)
+                        }
+                    }
             } else {
                 ProgressView()
                     .controlSize(.large)
@@ -133,9 +164,23 @@ private struct ZoomableImageView: View {
             }
         }
         .task(id: asset.localIdentifier) {
+            resetState()
             await loadImage()
         }
     }
+
+    private func resetState() {
+        image = nil
+        scale = 1
+        offset = .zero
+        lastScale = 1
+        player?.pause()
+        player = nil
+        isPlayingVideo = false
+        loadingVideo = false
+    }
+
+    // MARK: - Gestures
 
     private func magnifyGesture() -> some Gesture {
         MagnifyGesture()
@@ -154,19 +199,13 @@ private struct ZoomableImageView: View {
             }
     }
 
-    private func loadImage() async {
-        image = nil
-        scale = 1
-        offset = .zero
-        lastScale = 1
+    // MARK: - Image loading
 
-        // Fast low-res pass first so something appears immediately
+    private func loadImage() async {
         if let thumb = await fetchImage(size: CGSize(width: 600, height: 600), mode: .fastFormat) {
             image = thumb
         }
-        guard !Task.isCancelled else { return }
-
-        // Full-resolution pass
+        guard !Task.isCancelled, !isVideo else { return }
         if let full = await fetchImage(size: PHImageManagerMaximumSize, mode: .highQualityFormat) {
             image = full
         }
@@ -190,6 +229,29 @@ private struct ZoomableImageView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Video playback
+
+    private func playVideo() async {
+        loadingVideo = true
+        let capturedAsset = asset
+        let avAsset: AVAsset? = await withCheckedContinuation { continuation in
+            let options = PHVideoRequestOptions()
+            options.isNetworkAccessAllowed = true
+            options.deliveryMode = .automatic
+            PHImageManager.default().requestAVAsset(
+                forVideo: capturedAsset, options: options
+            ) { avAsset, _, _ in
+                continuation.resume(returning: avAsset)
+            }
+        }
+        loadingVideo = false
+        guard let avAsset else { return }
+        let newPlayer = AVPlayer(playerItem: AVPlayerItem(asset: avAsset))
+        player = newPlayer
+        isPlayingVideo = true
+        newPlayer.play()
     }
 }
 

@@ -68,16 +68,31 @@ final class DatabaseService {
             try db.create(index: "idx_bw_month", on: "bandwidth_stats", columns: ["monthKey"])
         }
 
+        migrator.registerMigration("v5_search_text") { db in
+            try db.alter(table: "backups") { t in
+                t.add(column: "recognizedText", .text)    // full OCR text, newline-separated
+                t.add(column: "animalLabels", .text)      // JSON-encoded [String]
+            }
+        }
+
         try migrator.migrate(dbQueue)
     }
 
-    func updateVisionMetadata(assetId: String, faceCount: Int?, sceneLabels: [String], hasText: Bool) throws {
+    func updateVisionMetadata(assetId: String, faceCount: Int?, sceneLabels: [String], hasText: Bool,
+                              recognizedText: [String] = [], animalLabels: [String] = []) throws {
         let labelsJSON = sceneLabels.isEmpty ? nil :
             String(data: (try? JSONEncoder().encode(sceneLabels)) ?? Data(), encoding: .utf8)
+        let ocrText = recognizedText.isEmpty ? nil : recognizedText.joined(separator: "\n")
+        let animalsJSON = animalLabels.isEmpty ? nil :
+            String(data: (try? JSONEncoder().encode(animalLabels)) ?? Data(), encoding: .utf8)
         try dbQueue.write { db in
             try db.execute(
-                sql: "UPDATE backups SET faceCount = :fc, sceneLabels = :sl, hasText = :ht WHERE assetId = :id",
-                arguments: ["fc": faceCount, "sl": labelsJSON, "ht": hasText, "id": assetId]
+                sql: """
+                UPDATE backups SET faceCount = :fc, sceneLabels = :sl, hasText = :ht,
+                       recognizedText = :ocr, animalLabels = :al WHERE assetId = :id
+                """,
+                arguments: ["fc": faceCount, "sl": labelsJSON, "ht": hasText,
+                            "ocr": ocrText, "al": animalsJSON, "id": assetId]
             )
         }
     }
@@ -91,14 +106,22 @@ final class DatabaseService {
         }
     }
 
-    /// Search backed-up records using Vision metadata.
-    func searchRecords(hasText: Bool? = nil, minFaces: Int? = nil, sceneKeyword: String? = nil, limit: Int = 200) throws -> [BackupRecord] {
+    /// Search backed-up records using Vision metadata. Searches scene labels, OCR text, and animal labels.
+    func searchRecords(hasText: Bool? = nil, minFaces: Int? = nil, sceneKeyword: String? = nil,
+                       textQuery: String? = nil, limit: Int = 200) throws -> [BackupRecord] {
         try dbQueue.read { db in
             var conditions: [String] = []
             var args: [any DatabaseValueConvertible] = []
             if hasText == true { conditions.append("hasText = 1") }
             if let min = minFaces { conditions.append("faceCount >= ?"); args.append(min) }
-            if let kw = sceneKeyword, !kw.isEmpty { conditions.append("sceneLabels LIKE ?"); args.append("%\(kw)%") }
+            if let kw = sceneKeyword, !kw.isEmpty {
+                conditions.append("(sceneLabels LIKE ? OR animalLabels LIKE ?)")
+                args.append("%\(kw)%"); args.append("%\(kw)%")
+            }
+            if let tq = textQuery, !tq.isEmpty {
+                conditions.append("recognizedText LIKE ?")
+                args.append("%\(tq)%")
+            }
             let whereClause = conditions.isEmpty ? "" : "WHERE " + conditions.joined(separator: " AND ")
             let sql = "SELECT * FROM backups \(whereClause) LIMIT ?"
             args.append(limit)

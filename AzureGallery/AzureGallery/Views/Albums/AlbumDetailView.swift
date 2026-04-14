@@ -18,6 +18,7 @@ struct AlbumDetailView: View {
                 if let result = fetchResult {
                     ForEach(0..<result.count, id: \.self) { index in
                         AlbumThumbnailCell(asset: result.object(at: index))
+                            .contentShape(Rectangle())
                             .onTapGesture {
                                 selectedPhoto = PhotoSelection(id: index)
                             }

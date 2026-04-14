@@ -315,6 +315,7 @@
 				DEVELOPMENT_TEAM = 927D2ANU48;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_BGTaskSchedulerPermittedIdentifiers = "$(inherited) com.yogesh.AzureGallery.backgroundRefresh";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "AzureGallery uses your photo library to display your photos and back them up to Azure Storage.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -351,6 +352,7 @@
 				DEVELOPMENT_TEAM = 927D2ANU48;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_BGTaskSchedulerPermittedIdentifiers = "$(inherited) com.yogesh.AzureGallery.backgroundRefresh";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "AzureGallery uses your photo library to display your photos and back them up to Azure Storage.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

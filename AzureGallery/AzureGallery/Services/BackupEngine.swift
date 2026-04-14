@@ -5,7 +5,10 @@ import CryptoKit
 import UIKit
 
 private let backgroundSessionIdentifier = "com.yogesh.AzureGallery.backgroundUpload"
-private let maxConcurrentUploads = 3
+private var maxConcurrentUploads: Int {
+    let stored = UserDefaults.standard.integer(forKey: "maxConcurrentUploads")
+    return stored > 0 ? stored : 10
+}
 private let maxRetries = 3
 
 /// Live progress snapshot for a single in-flight upload.
@@ -15,6 +18,8 @@ struct ActiveUploadItem: Identifiable {
     var bytesSent: Int64 = 0
     var totalBytes: Int64 = 0
     var progress: Double { totalBytes > 0 ? Double(bytesSent) / Double(totalBytes) : 0 }
+    /// Non-nil while the asset is being downloaded from iCloud before export. Range 0.0 ... 1.0.
+    var iCloudProgress: Double?
 }
 /// UserDefaults key: maps URLSession taskIdentifier (String) → assetId (String).
 /// Persisted so the mapping survives app termination between upload and delegate callback.
@@ -142,9 +147,15 @@ final class BackupEngine: NSObject {
         // Scan library and queue new photos
         await scanAndQueue(photoLibrary: photoLibrary)
 
+        // Tell badge views the cache is stale — records just entered the DB.
+        DispatchQueue.main.async { BackupBadge.invalidate() }
+
         // Wire up real-time new photo detection
         photoLibrary.onNewAssets = { [weak self] newAssets in
-            Task { await self?.queue(assets: newAssets) }
+            Task {
+                await self?.queue(assets: newAssets)
+                DispatchQueue.main.async { BackupBadge.invalidate() }
+            }
         }
 
         // Start processing
@@ -265,11 +276,27 @@ final class BackupEngine: NSObject {
             assetId: record.assetId,
             faceCount: analysis.faceCount > 0 ? analysis.faceCount : nil,
             sceneLabels: analysis.sceneLabels.map(\.label),
-            hasText: !analysis.recognizedText.isEmpty
+            hasText: !analysis.recognizedText.isEmpty,
+            recognizedText: analysis.recognizedText,
+            animalLabels: analysis.animalLabels
         )
 
+        // Pre-create the active upload item so iCloud progress can be shown before the
+        // background upload starts. It will be updated with file size after export.
+        let fileName = URL(string: record.blobName)?.lastPathComponent ?? record.blobName
+        await MainActor.run {
+            activeUploadItems[record.assetId] = ActiveUploadItem(
+                id: record.assetId, fileName: fileName
+            )
+        }
+
         do {
-            let tempURL = try await FileExporter.export(asset: asset)
+            let assetId = record.assetId
+            let tempURL = try await FileExporter.export(asset: asset) { progress in
+                DispatchQueue.main.async { [weak self] in
+                    self?.activeUploadItems[assetId]?.iCloudProgress = progress
+                }
+            }
             let fileSize = (try? FileManager.default.attributesOfItem(atPath: tempURL.path)[.size] as? Int64) ?? 0
             let contentType = contentType(for: asset)
             await MainActor.run {
@@ -286,6 +313,7 @@ final class BackupEngine: NSObject {
                     try? db.updateStatus(assetId: record.assetId, status: .uploaded)
                     try? FileManager.default.removeItem(at: tempURL)
                     await MainActor.run {
+                        activeUploadItems.removeValue(forKey: record.assetId)
                         AppLogger.shared.info("[\(shortId)] Duplicate of \(String(existing.assetId.prefix(8))) — skipped upload", tag: "BackupEngine")
                         BackupBadge.invalidate()
                     }
@@ -298,6 +326,7 @@ final class BackupEngine: NSObject {
                 try? db.updateStatus(assetId: record.assetId, status: .uploaded)
                 try? FileManager.default.removeItem(at: tempURL)
                 await MainActor.run {
+                    activeUploadItems.removeValue(forKey: record.assetId)
                     AppLogger.shared.info("[\(shortId)] Blob exists in Azure — skipped re-upload", tag: "BackupEngine")
                     BackupBadge.invalidate()
                 }
@@ -328,14 +357,14 @@ final class BackupEngine: NSObject {
             map[String(task.taskIdentifier)] = record.assetId
             taskMap = map
             activeUploads += 1
-            let fileName = URL(string: record.blobName)?.lastPathComponent ?? record.blobName
-            activeUploadItems[record.assetId] = ActiveUploadItem(
-                id: record.assetId, fileName: fileName, totalBytes: fileSize
-            )
+            // Update the existing item with file size and clear iCloud progress
+            activeUploadItems[record.assetId]?.totalBytes = fileSize
+            activeUploadItems[record.assetId]?.iCloudProgress = nil
             task.resume()
         } catch {
             try? db.updateStatus(assetId: record.assetId, status: .failed, error: error.localizedDescription)
             await MainActor.run {
+                activeUploadItems.removeValue(forKey: record.assetId)
                 AppLogger.shared.error("[\(shortId)] Upload setup failed: \(error.localizedDescription)", tag: "BackupEngine")
             }
         }
@@ -441,6 +470,9 @@ extension BackupEngine: URLSessionDelegate, URLSessionTaskDelegate {
             if let fileURL = (task as? URLSessionUploadTask).flatMap({ _ in nil as URL? }) {
                 try? FileManager.default.removeItem(at: fileURL)
             }
+
+            // Keep widget data fresh after each successful upload
+            BackupWidgetData.current().save()
 
             // Update badge count with remaining pending uploads
             let pending = (try? db.pendingCount()) ?? 0

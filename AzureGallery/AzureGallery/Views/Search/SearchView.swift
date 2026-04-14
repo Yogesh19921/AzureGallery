@@ -83,14 +83,32 @@ struct SearchView: View {
         case .animal:    sceneKw = "animal"
         default: break
         }
-        // Free text overrides scene keyword
-        if !query.isEmpty && sceneKw == nil { sceneKw = query }
 
-        results = (try? DatabaseService.shared.searchRecords(
-            hasText: hasText,
-            minFaces: minFaces,
-            sceneKeyword: sceneKw
-        )) ?? []
+        // Semantic search: expand free-text query into matching scene labels via NLEmbedding
+        if !query.isEmpty && sceneKw == nil {
+            let expanded = SemanticSearchService.expandQuery(query)
+            // Try each expanded keyword and merge results
+            var merged: [String: BackupRecord] = [:]
+            for kw in expanded {
+                let partial = (try? DatabaseService.shared.searchRecords(
+                    hasText: hasText, minFaces: minFaces, sceneKeyword: kw
+                )) ?? []
+                for r in partial { merged[r.assetId] = r }
+            }
+            // Also search OCR text directly
+            let textResults = (try? DatabaseService.shared.searchRecords(
+                hasText: hasText, minFaces: minFaces, textQuery: query
+            )) ?? []
+            for r in textResults { merged[r.assetId] = r }
+
+            results = Array(merged.values.prefix(200))
+        } else {
+            results = (try? DatabaseService.shared.searchRecords(
+                hasText: hasText,
+                minFaces: minFaces,
+                sceneKeyword: sceneKw
+            )) ?? []
+        }
     }
 }
 

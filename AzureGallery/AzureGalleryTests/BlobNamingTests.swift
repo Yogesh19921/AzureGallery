@@ -69,7 +69,8 @@ final class BlobNamingTests: XCTestCase {
     func testSanitizedPathHasOriginalsPrefix() {
         // Construct expected path shape manually to verify prefix convention
         let sanitized = BlobNaming.sanitize("UUID-L0-001")
-        let path = "originals/2024/01/\(sanitized).HEIC"
+        let deviceId = DeviceIdentifier.current
+        let path = "originals/\(deviceId)/2024/01/\(sanitized).HEIC"
         XCTAssertTrue(path.hasPrefix("originals/"))
     }
 
@@ -82,5 +83,36 @@ final class BlobNamingTests: XCTestCase {
     func testMonthDoubleDigitNoLeadingZero() {
         let month = String(format: "%02d", 11)
         XCTAssertEqual(month, "11")
+    }
+
+    // MARK: - Multi-device blob naming (V2)
+
+    func testV2PathContainsDeviceIdSegment() {
+        // Construct V2 path manually to verify device ID is included
+        let deviceId = DeviceIdentifier.current
+        let sanitized = BlobNaming.sanitize("ABC-L0-001")
+        let path = "originals/\(deviceId)/2024/06/\(sanitized).HEIC"
+        let components = path.split(separator: "/")
+        // Expected: ["originals", "<device-id>", "2024", "06", "ABC-L0-001.HEIC"]
+        XCTAssertEqual(components.count, 5, "V2 path should have 5 segments")
+        XCTAssertEqual(String(components[1]), deviceId, "Second segment should be device ID")
+    }
+
+    func testV2PathStructure() {
+        // Verify the overall V2 structure: originals/<device-id>/<year>/<month>/...
+        let deviceId = DeviceIdentifier.current
+        let sanitized = BlobNaming.sanitize("F1A2B3C4/L0/001")
+        let path = "originals/\(deviceId)/2025/03/\(sanitized).HEIC"
+        XCTAssertTrue(path.hasPrefix("originals/\(deviceId)/"), "Path must start with originals/<device-id>/")
+        let components = path.split(separator: "/")
+        XCTAssertEqual(String(components[0]), "originals")
+        XCTAssertEqual(String(components[1]), deviceId)
+        XCTAssertEqual(String(components[2]), "2025")
+        XCTAssertEqual(String(components[3]), "03")
+    }
+
+    func testDeviceIdIsNonEmpty() {
+        let deviceId = DeviceIdentifier.current
+        XCTAssertFalse(deviceId.isEmpty, "Device ID must not be empty for blob paths")
     }
 }

@@ -54,6 +54,7 @@ struct GalleryView: View {
             LazyVGrid(columns: columns, spacing: 2) {
                 ForEach(0..<photoLibrary.assets.count, id: \.self) { index in
                     ThumbnailCell(asset: photoLibrary.assets.object(at: index))
+                        .contentShape(Rectangle())
                         .onTapGesture {
                             selectedPhoto = PhotoSelection(id: index)
                         }

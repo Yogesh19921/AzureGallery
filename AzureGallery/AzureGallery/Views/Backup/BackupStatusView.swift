@@ -8,6 +8,12 @@ struct BackupStatusView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    BackupWidgetView(stats: stats)
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                }
+
                 Section("Library") {
                     StatRow(label: "Total Photos",  value: stats.totalInLibrary)
                     StatRow(label: "Backed Up",     value: stats.uploaded,    color: .green)
@@ -125,19 +131,42 @@ private struct UploadProgressRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
 
-            ProgressView(value: item.progress)
-                .tint(.blue)
+            if let iCloudProgress = item.iCloudProgress {
+                // iCloud download in progress — show a secondary progress bar
+                HStack(spacing: 6) {
+                    Image(systemName: "icloud.and.arrow.down")
+                        .font(.caption)
+                        .foregroundStyle(.cyan)
+                    Text("Downloading from iCloud...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
-            HStack {
-                Text(formatted(item.bytesSent))
-                Text("of")
-                Text(item.totalBytes > 0 ? formatted(item.totalBytes) : "—")
-                Spacer()
-                Text(String(format: "%.0f%%", item.progress * 100))
-                    .monospacedDigit()
+                ProgressView(value: iCloudProgress)
+                    .tint(.cyan)
+
+                HStack {
+                    Spacer()
+                    Text(String(format: "%.0f%%", iCloudProgress * 100))
+                        .monospacedDigit()
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } else {
+                ProgressView(value: item.progress)
+                    .tint(.blue)
+
+                HStack {
+                    Text(formatted(item.bytesSent))
+                    Text("of")
+                    Text(item.totalBytes > 0 ? formatted(item.totalBytes) : "—")
+                    Spacer()
+                    Text(String(format: "%.0f%%", item.progress * 100))
+                        .monospacedDigit()
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
     }

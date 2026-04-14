@@ -56,6 +56,39 @@ struct AzureBlobService {
         return data
     }
 
+    /// Container storage stats: total blob count and total bytes.
+    func containerStats() async throws -> (blobCount: Int, totalBytes: Int64) {
+        var count = 0
+        var bytes: Int64 = 0
+        var marker: String? = nil
+
+        repeat {
+            var components = URLComponents(url: config.containerURL(), resolvingAgainstBaseURL: false)!
+            var queryItems = [
+                URLQueryItem(name: "restype", value: "container"),
+                URLQueryItem(name: "comp", value: "list"),
+            ]
+            if let m = marker { queryItems.append(URLQueryItem(name: "marker", value: m)) }
+            components.queryItems = queryItems
+            var request = URLRequest(url: components.url!)
+            request.httpMethod = "GET"
+            try sign(&request, contentLength: 0, contentType: "")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+                throw AzureError.unexpectedStatus((response as? HTTPURLResponse)?.statusCode ?? 0)
+            }
+            let parser = BlobStatsParser()
+            let xml = XMLParser(data: data)
+            xml.delegate = parser
+            xml.parse()
+            count += parser.blobCount
+            bytes += parser.totalBytes
+            marker = parser.nextMarker
+        } while marker != nil
+
+        return (count, bytes)
+    }
+
     /// Check if a blob exists (HEAD request). Returns true if 200, false if 404.
     func blobExists(blobName: String) async throws -> Bool {
         let url = config.blobURL(blobName: blobName)
@@ -234,6 +267,40 @@ private final class BlobListParser: NSObject, XMLParserDelegate {
                 qualifiedName qName: String?) {
         if elementName == "Name" && !currentName.isEmpty {
             blobNames.append(currentName)
+        }
+    }
+}
+
+// MARK: - XML Parser for Container Stats (blob count + total size)
+
+private final class BlobStatsParser: NSObject, XMLParserDelegate {
+    var blobCount = 0
+    var totalBytes: Int64 = 0
+    var nextMarker: String?
+    private var currentElement = ""
+    private var currentText = ""
+
+    func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?,
+                qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+        currentElement = elementName
+        if elementName == "Content-Length" || elementName == "NextMarker" {
+            currentText = ""
+        }
+    }
+
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        if currentElement == "Content-Length" || currentElement == "NextMarker" {
+            currentText += string
+        }
+    }
+
+    func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?,
+                qualifiedName qName: String?) {
+        if elementName == "Content-Length", let size = Int64(currentText) {
+            totalBytes += size
+            blobCount += 1
+        } else if elementName == "NextMarker" && !currentText.isEmpty {
+            nextMarker = currentText
         }
     }
 }

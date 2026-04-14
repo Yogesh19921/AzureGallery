@@ -1,4 +1,5 @@
 import SwiftUI
+import BackgroundTasks
 
 // MARK: - Appearance
 
@@ -39,12 +40,21 @@ struct AzureGalleryApp: App {
     /// Persisted appearance preference. Defaults to "System" on first launch.
     @AppStorage("appearanceMode") private var appearanceMode = AppearanceMode.system
 
+    /// Tracks whether the user has completed the first-launch onboarding flow.
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environment(photoLibrary)
                 // nil = follow iOS system setting; .light/.dark = override
                 .preferredColorScheme(appearanceMode.colorScheme)
+                .fullScreenCover(isPresented: Binding(
+                    get: { !hasCompletedOnboarding },
+                    set: { if !$0 { hasCompletedOnboarding = true } }
+                )) {
+                    OnboardingView(hasCompletedOnboarding: $hasCompletedOnboarding)
+                }
                 .task {
                     do {
                         try DatabaseService.shared.setup()
@@ -54,6 +64,8 @@ struct AzureGalleryApp: App {
                     await photoLibrary.requestAuthorization()
                     NotificationService.requestPermission()
                     await BackupEngine.shared.start(photoLibrary: photoLibrary)
+                    BackgroundTaskService.register()
+                    BackgroundTaskService.scheduleRefresh()
                 }
         }
     }

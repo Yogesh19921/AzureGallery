@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var chargeOnlyEnabled: Bool = UserDefaults.standard.bool(forKey: "chargeOnly")
     @AppStorage("appearanceMode") private var appearanceMode = AppearanceMode.system
     @AppStorage("storageTier") private var storageTier = ""
+    @AppStorage("maxConcurrentUploads") private var maxConcurrentUploads = 10
 
     private var isConfigured: Bool { KeychainHelper.load(key: KeychainHelper.connectionStringKey) != nil }
 
@@ -26,6 +27,11 @@ struct SettingsView: View {
                             .font(.caption)
                     }
                     Button("Configure Azure…") { showAzureSetup = true }
+                    if isConfigured {
+                        NavigationLink("Storage & Cost") {
+                            StorageDashboardView()
+                        }
+                    }
                 }
 
                 Section("Backup") {
@@ -45,6 +51,7 @@ struct SettingsView: View {
                         .onChange(of: chargeOnlyEnabled) {
                             UserDefaults.standard.set(chargeOnlyEnabled, forKey: "chargeOnly")
                         }
+                    Stepper("Concurrent Uploads: \(maxConcurrentUploads)", value: $maxConcurrentUploads, in: 1...20)
                 }
 
                 Section("Storage") {
