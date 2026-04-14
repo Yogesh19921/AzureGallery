@@ -9,7 +9,9 @@
 | 200 GB | $35.88/yr | $23.88/yr | **$8.64/yr** |
 | 1 TB | $131.88/yr | $131.88/yr | **$43.20/yr** |
 
-*Based on Azure Cold tier ($0.0036/GB/month). S3 and GCP are comparable. Uploads are free. Downloads (restore) cost ~$0.01/GB — a one-time 100 GB restore costs about $1.*
+**How AzureGallery pricing works:** You pay only for what you use — **$0.0036 per GB per month** (about 4 cents per GB per year). No fixed tiers, no minimum. Use 73 GB? Pay for exactly 73 GB. iCloud and Google force you into 50/200 GB/2 TB buckets and you pay for the full tier even if you only use half.
+
+Uploads are free. Downloads (restoring to a new phone) cost ~$0.01/GB — a one-time 100 GB restore is about $1. S3 and GCP offer similar pay-as-you-go pricing.
 
 You own the storage. No one else touches your photos.
 
@@ -98,7 +100,18 @@ xcodebuild test -scheme AzureGallery -destination 'platform=iOS Simulator,name=i
 
 ## Screenshots
 
-*Coming soon*
+<p align="center">
+<img src="Screenshots/IMG_9454.png" width="200" alt="Gallery with cloud badges">
+<img src="Screenshots/IMG_9455.png" width="200" alt="Albums & media types">
+<img src="Screenshots/IMG_9456.png" width="200" alt="Backup status">
+</p>
+<p align="center">
+<img src="Screenshots/IMG_9457.png" width="200" alt="Settings">
+<img src="Screenshots/IMG_9458.png" width="200" alt="Storage & cost dashboard">
+<img src="Screenshots/IMG_9459.png" width="200" alt="Multi-cloud providers">
+</p>
+
+*Gallery with cloud badges | Albums | Backup status | Settings | Storage & cost | Cloud providers*
 
 ## License
 
