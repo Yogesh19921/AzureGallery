@@ -49,6 +49,25 @@ final class DatabaseService {
             }
         }
 
+        migrator.registerMigration("v3_content_hash") { db in
+            try db.alter(table: "backups") { t in
+                t.add(column: "contentHash", .text)
+            }
+            try db.create(index: "idx_backups_hash", on: "backups", columns: ["contentHash"])
+        }
+
+        migrator.registerMigration("v4_bandwidth_stats") { db in
+            try db.create(table: "bandwidth_stats") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("bytesUploaded", .integer).notNull()
+                t.column("dateKey", .text).notNull()
+                t.column("monthKey", .text).notNull()
+                t.column("recordedAt", .text).notNull()
+            }
+            try db.create(index: "idx_bw_date", on: "bandwidth_stats", columns: ["dateKey"])
+            try db.create(index: "idx_bw_month", on: "bandwidth_stats", columns: ["monthKey"])
+        }
+
         try migrator.migrate(dbQueue)
     }
 
@@ -72,6 +91,22 @@ final class DatabaseService {
         }
     }
 
+    /// Search backed-up records using Vision metadata.
+    func searchRecords(hasText: Bool? = nil, minFaces: Int? = nil, sceneKeyword: String? = nil, limit: Int = 200) throws -> [BackupRecord] {
+        try dbQueue.read { db in
+            var conditions: [String] = []
+            var args: [any DatabaseValueConvertible] = []
+            if hasText == true { conditions.append("hasText = 1") }
+            if let min = minFaces { conditions.append("faceCount >= ?"); args.append(min) }
+            if let kw = sceneKeyword, !kw.isEmpty { conditions.append("sceneLabels LIKE ?"); args.append("%\(kw)%") }
+            let whereClause = conditions.isEmpty ? "" : "WHERE " + conditions.joined(separator: " AND ")
+            let sql = "SELECT * FROM backups \(whereClause) LIMIT ?"
+            args.append(limit)
+            let rows = try Row.fetchAll(db, sql: sql, arguments: StatementArguments(args))
+            return try rows.map { try BackupRecord(row: $0) }
+        }
+    }
+
     func upsert(_ record: inout BackupRecord) throws {
         try dbQueue.write { db in
             try record.save(db)
@@ -89,6 +124,13 @@ final class DatabaseService {
         try dbQueue.read { db in
             let ids = try String.fetchAll(db, sql: "SELECT assetId FROM backups")
             return Set(ids)
+        }
+    }
+
+    /// Returns the number of records with `pending` status.
+    func pendingCount() throws -> Int {
+        try dbQueue.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM backups WHERE status = 'pending'") ?? 0
         }
     }
 
@@ -147,6 +189,100 @@ final class DatabaseService {
         }
     }
 
+    /// Removes pending / failed records whose assetId is NOT in `allowedIds`.
+    /// Already-uploaded records are kept (they represent completed work).
+    /// Pass `nil` to skip purging (all photos allowed). Pass empty set to purge everything non-uploaded.
+    func purgeNonUploadedNotIn(allowedIds: Set<String>?) throws {
+        guard let allowed = allowedIds else { return } // nil = everything allowed
+        try dbQueue.write { db in
+            if allowed.isEmpty {
+                try db.execute(sql: "DELETE FROM backups WHERE status NOT IN ('uploaded', 'uploading')")
+            } else {
+                let rows = try String.fetchAll(db, sql: "SELECT assetId FROM backups WHERE status NOT IN ('uploaded', 'uploading')")
+                let toDelete = rows.filter { !allowed.contains($0) }
+                for id in toDelete {
+                    try db.execute(sql: "DELETE FROM backups WHERE assetId = ?", arguments: [id])
+                }
+            }
+        }
+    }
+
+    /// Returns all records with status `uploaded`, ordered by creationDate descending.
+    func uploadedRecords() throws -> [BackupRecord] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT * FROM backups WHERE status = 'uploaded' ORDER BY creationDate DESC")
+            return try rows.map { try BackupRecord(row: $0) }
+        }
+    }
+
+    // MARK: - Content Hash
+
+    /// Returns the first backup record matching the given SHA-256 content hash, or nil.
+    func recordByHash(hash: String) throws -> BackupRecord? {
+        try dbQueue.read { db in
+            guard let row = try Row.fetchOne(db, sql: "SELECT * FROM backups WHERE contentHash = ? LIMIT 1", arguments: [hash]) else { return nil }
+            return try BackupRecord(row: row)
+        }
+    }
+
+    /// Stores the SHA-256 content hash for a given asset.
+    func updateHash(assetId: String, hash: String) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE backups SET contentHash = :hash WHERE assetId = :assetId",
+                arguments: ["hash": hash, "assetId": assetId]
+            )
+        }
+    }
+
+    // MARK: - Bandwidth Stats
+
+    private static let dateKeyFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "UTC")
+        return f
+    }()
+
+    private static let monthKeyFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM"
+        f.timeZone = TimeZone(identifier: "UTC")
+        return f
+    }()
+
+    /// Records a successful upload's byte count for bandwidth tracking.
+    func recordUpload(bytes: Int64, date: Date) throws {
+        let dateKey = DatabaseService.dateKeyFormatter.string(from: date)
+        let monthKey = DatabaseService.monthKeyFormatter.string(from: date)
+        let recordedAt = ISO8601DateFormatter().string(from: date)
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO bandwidth_stats (bytesUploaded, dateKey, monthKey, recordedAt)
+                    VALUES (:bytes, :dateKey, :monthKey, :recordedAt)
+                    """,
+                arguments: ["bytes": bytes, "dateKey": dateKey, "monthKey": monthKey, "recordedAt": recordedAt]
+            )
+        }
+    }
+
+    /// Total bytes uploaded on the current UTC calendar day.
+    func bytesUploadedToday() throws -> Int64 {
+        let todayKey = DatabaseService.dateKeyFormatter.string(from: Date())
+        return try dbQueue.read { db in
+            try Int64.fetchOne(db, sql: "SELECT COALESCE(SUM(bytesUploaded), 0) FROM bandwidth_stats WHERE dateKey = ?", arguments: [todayKey]) ?? 0
+        }
+    }
+
+    /// Total bytes uploaded in the current UTC calendar month.
+    func bytesUploadedThisMonth() throws -> Int64 {
+        let monthKey = DatabaseService.monthKeyFormatter.string(from: Date())
+        return try dbQueue.read { db in
+            try Int64.fetchOne(db, sql: "SELECT COALESCE(SUM(bytesUploaded), 0) FROM bandwidth_stats WHERE monthKey = ?", arguments: [monthKey]) ?? 0
+        }
+    }
+
     /// Resets any records stuck in `.uploading` back to `.pending`.
     /// Called on launch — if the app was killed mid-upload the URLSession task is gone,
     /// so these records would never progress without a reset.
@@ -159,7 +295,9 @@ final class DatabaseService {
     /// Aggregates backup counts across all status values.
     /// - Parameter totalInLibrary: Total asset count from PhotoKit (not tracked in DB).
     func stats(totalInLibrary: Int) throws -> BackupStats {
-        try dbQueue.read { db in
+        let todayKey = DatabaseService.dateKeyFormatter.string(from: Date())
+        let monthKey = DatabaseService.monthKeyFormatter.string(from: Date())
+        return try dbQueue.read { db in
             let uploaded = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM backups WHERE status = 'uploaded'") ?? 0
             let pending = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM backups WHERE status = 'pending'") ?? 0
             let uploading = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM backups WHERE status = 'uploading'") ?? 0
@@ -167,6 +305,8 @@ final class DatabaseService {
             let permFailed = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM backups WHERE status = 'perm_failed'") ?? 0
             let lastDateStr = try String.fetchOne(db, sql: "SELECT MAX(uploadedAt) FROM backups WHERE uploadedAt IS NOT NULL")
             let lastDate = lastDateStr.flatMap { ISO8601DateFormatter().date(from: $0) }
+            let bytesToday = try Int64.fetchOne(db, sql: "SELECT COALESCE(SUM(bytesUploaded), 0) FROM bandwidth_stats WHERE dateKey = ?", arguments: [todayKey]) ?? 0
+            let bytesThisMonth = try Int64.fetchOne(db, sql: "SELECT COALESCE(SUM(bytesUploaded), 0) FROM bandwidth_stats WHERE monthKey = ?", arguments: [monthKey]) ?? 0
 
             return BackupStats(
                 totalInLibrary: totalInLibrary,
@@ -175,7 +315,9 @@ final class DatabaseService {
                 uploading: uploading,
                 failed: failed,
                 permFailed: permFailed,
-                lastUploadedAt: lastDate
+                lastUploadedAt: lastDate,
+                bytesToday: bytesToday,
+                bytesThisMonth: bytesThisMonth
             )
         }
     }

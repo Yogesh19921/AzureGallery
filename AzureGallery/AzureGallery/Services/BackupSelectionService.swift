@@ -98,7 +98,8 @@ final class BackupSelectionService {
     /// Returns the set of PHAsset localIdentifiers allowed for backup.
     /// Returns nil if all photos should be backed up (fast path).
     func allowedAssetIds() -> Set<String>? {
-        guard !backupAllPhotos, !selectedAlbumIds.isEmpty else { return nil }
+        guard !backupAllPhotos else { return nil }            // nil = back up everything
+        guard !selectedAlbumIds.isEmpty else { return Set() } // empty = back up nothing
 
         var allowed = Set<String>()
         let collections = PHAssetCollection.fetchAssetCollections(

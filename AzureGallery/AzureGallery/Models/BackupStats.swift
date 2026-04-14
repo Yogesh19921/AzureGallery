@@ -15,6 +15,11 @@ struct BackupStats {
     /// Date of the most recently completed upload, or nil if nothing has been uploaded yet.
     let lastUploadedAt: Date?
 
+    /// Total bytes uploaded today (UTC calendar day).
+    let bytesToday: Int64
+    /// Total bytes uploaded this calendar month (UTC).
+    let bytesThisMonth: Int64
+
     /// Sum of pending + uploading (items still in the work queue).
     var pendingTotal: Int { pending + uploading }
     /// Sum of failed + permFailed (items that need attention).
@@ -28,6 +33,8 @@ struct BackupStats {
         uploading: 0,
         failed: 0,
         permFailed: 0,
-        lastUploadedAt: nil
+        lastUploadedAt: nil,
+        bytesToday: 0,
+        bytesThisMonth: 0
     )
 }

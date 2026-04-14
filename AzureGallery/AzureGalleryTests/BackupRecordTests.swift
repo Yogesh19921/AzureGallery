@@ -115,6 +115,21 @@ final class BackupRecordTests: XCTestCase {
         XCTAssertEqual(fetched.sceneLabelsArray, ["sky", "outdoor"])
     }
 
+    func testContentHashRoundTripThroughGRDB() throws {
+        let db = try DatabaseService.makeInMemory()
+        var r = BackupRecord(assetId: "asset-hash", blobName: "test.HEIC", mediaType: "image")
+        r.contentHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        try db.upsert(&r)
+
+        let fetched = try XCTUnwrap(try db.record(for: "asset-hash"))
+        XCTAssertEqual(fetched.contentHash, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+    }
+
+    func testContentHashDefaultIsNil() {
+        let r = BackupRecord(assetId: "a", blobName: "b.HEIC", mediaType: "image")
+        XCTAssertNil(r.contentHash)
+    }
+
     // MARK: - Helpers
 
     private func encode(_ value: [String]) throws -> String {

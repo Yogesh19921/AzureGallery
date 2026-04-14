@@ -4,6 +4,10 @@ struct BackupStatusView: View {
     let stats: BackupStats
     private let engine = BackupEngine.shared
 
+    private static func formatBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -39,6 +43,21 @@ struct BackupStatusView: View {
                                 .foregroundStyle(.secondary)
                                 .font(.caption)
                         }
+                    }
+                }
+
+                Section("Bandwidth") {
+                    HStack {
+                        Text("Today")
+                        Spacer()
+                        Text(Self.formatBytes(stats.bytesToday))
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("This Month")
+                        Spacer()
+                        Text(Self.formatBytes(stats.bytesThisMonth))
+                            .foregroundStyle(.secondary)
                     }
                 }
             }

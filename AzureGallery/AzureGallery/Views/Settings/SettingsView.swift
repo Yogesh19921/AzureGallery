@@ -8,7 +8,9 @@ struct SettingsView: View {
         return stored == nil ? true : UserDefaults.standard.bool(forKey: "wifiOnly")
     }()
     @State private var showRetryConfirm = false
+    @State private var chargeOnlyEnabled: Bool = UserDefaults.standard.bool(forKey: "chargeOnly")
     @AppStorage("appearanceMode") private var appearanceMode = AppearanceMode.system
+    @AppStorage("storageTier") private var storageTier = ""
 
     private var isConfigured: Bool { KeychainHelper.load(key: KeychainHelper.connectionStringKey) != nil }
 
@@ -39,6 +41,26 @@ struct SettingsView: View {
                         .onChange(of: wifiOnlyEnabled) {
                             UserDefaults.standard.set(wifiOnlyEnabled, forKey: "wifiOnly")
                         }
+                    Toggle("Charge Only", isOn: $chargeOnlyEnabled)
+                        .onChange(of: chargeOnlyEnabled) {
+                            UserDefaults.standard.set(chargeOnlyEnabled, forKey: "chargeOnly")
+                        }
+                }
+
+                Section("Storage") {
+                    Picker("Access Tier", selection: $storageTier) {
+                        Text("Account Default").tag("")
+                        Text("Hot").tag("Hot")
+                        Text("Cool").tag("Cool")
+                        Text("Cold").tag("Cold")
+                        Text("Archive").tag("Archive")
+                    }
+                    if storageTier == "Archive" {
+                        Label("Archive files cannot be immediately downloaded. Rehydration may take hours.",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                 }
 
                 Section("Appearance") {
@@ -48,6 +70,12 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                }
+
+                Section("Diagnostics") {
+                    NavigationLink("Logs") {
+                        LogsView()
+                    }
                 }
 
                 Section {

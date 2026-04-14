@@ -38,6 +38,8 @@ struct BackupRecord: Identifiable, Sendable {
     var faceCount: Int?
     var sceneLabels: String?    // JSON-encoded [String]
     var hasText: Bool
+    /// SHA-256 content hash for duplicate detection. Nil until the file is exported and hashed.
+    var contentHash: String?
 
     init(
         assetId: String,
@@ -57,6 +59,7 @@ struct BackupRecord: Identifiable, Sendable {
         self.faceCount = nil
         self.sceneLabels = nil
         self.hasText = false
+        self.contentHash = nil
     }
 
     /// Decoded scene labels from the JSON-encoded `sceneLabels` column.
@@ -92,6 +95,7 @@ extension BackupRecord: FetchableRecord {
         faceCount    = row["faceCount"]
         sceneLabels  = row["sceneLabels"]
         hasText      = row["hasText"] ?? false
+        contentHash  = row["contentHash"]
     }
 }
 
@@ -111,6 +115,7 @@ extension BackupRecord: MutablePersistableRecord {
         container["faceCount"]    = faceCount
         container["sceneLabels"]  = sceneLabels
         container["hasText"]      = hasText
+        container["contentHash"]  = contentHash
     }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {
@@ -128,7 +133,8 @@ extension BackupRecord {
         static let retries    = Column("retries")
         static let uploadedAt = Column("uploadedAt")
         static let error      = Column("error")
-        static let faceCount  = Column("faceCount")
-        static let hasText    = Column("hasText")
+        static let faceCount    = Column("faceCount")
+        static let hasText      = Column("hasText")
+        static let contentHash  = Column("contentHash")
     }
 }

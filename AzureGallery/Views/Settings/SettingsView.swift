@@ -7,6 +7,7 @@ struct SettingsView: View {
         let stored = UserDefaults.standard.object(forKey: "wifiOnly")
         return stored == nil ? true : UserDefaults.standard.bool(forKey: "wifiOnly")
     }()
+    @State private var chargeOnlyEnabled: Bool = UserDefaults.standard.bool(forKey: "chargeOnly")
     @State private var showRetryConfirm = false
     private var isConfigured: Bool { KeychainHelper.load(key: KeychainHelper.connectionStringKey) != nil }
 
@@ -32,6 +33,10 @@ struct SettingsView: View {
                     Toggle("Wi-Fi Only", isOn: $wifiOnlyEnabled)
                         .onChange(of: wifiOnlyEnabled) {
                             UserDefaults.standard.set(wifiOnlyEnabled, forKey: "wifiOnly")
+                        }
+                    Toggle("Charge Only", isOn: $chargeOnlyEnabled)
+                        .onChange(of: chargeOnlyEnabled) {
+                            UserDefaults.standard.set(chargeOnlyEnabled, forKey: "chargeOnly")
                         }
                 }
 

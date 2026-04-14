@@ -8,6 +8,7 @@ struct PhotoDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showMetadata = false
+    @State private var dragOffset: CGFloat = 0
 
     var body: some View {
         ZStack {
@@ -24,13 +25,13 @@ struct PhotoDetailView: View {
             .tabViewStyle(.page(indexDisplayMode: .never))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea()
+            .offset(y: dragOffset)
+            .opacity(1 - min(0.5, abs(dragOffset) / 400))
 
-            // Back button — top layer so it always receives taps
+            // Top bar
             VStack {
                 HStack {
-                    Button {
-                        dismiss()
-                    } label: {
+                    Button { dismiss() } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "chevron.left")
                                 .font(.title3.weight(.semibold))
@@ -50,36 +51,42 @@ struct PhotoDetailView: View {
                     Text("\(currentIndex + 1) / \(fetchResult.count)")
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.8))
-                        .padding(.trailing, 16)
                         .padding(.top, 8)
+
+                    // Info button — always available, no gesture needed
+                    Button { showMetadata = true } label: {
+                        Image(systemName: "info.circle")
+                            .font(.title3)
+                            .foregroundStyle(.white)
+                            .padding(10)
+                            .background(.black.opacity(0.5), in: Circle())
+                    }
+                    .padding(.trailing, 16)
+                    .padding(.top, 8)
                 }
                 Spacer()
-
-                // Swipe-up hint
-                if !showMetadata {
-                    VStack(spacing: 4) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(Color.white.opacity(0.6))
-                            .frame(width: 36, height: 4)
-                        Text("Swipe up for details")
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.7))
-                    }
-                    .padding(.bottom, 24)
-                    .transition(.opacity)
-                    .allowsHitTesting(false)
-                }
             }
         }
-        .gesture(
-            DragGesture(minimumDistance: 30)
+        // simultaneousGesture so TabView paging (horizontal) still works.
+        // Only respond to clearly vertical drags.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 50)
+                .onChanged { v in
+                    let h = v.translation.height
+                    let w = v.translation.width
+                    guard abs(h) > abs(w) * 1.5 else { return }
+                    dragOffset = h
+                }
                 .onEnded { v in
                     let h = v.translation.height
                     let w = v.translation.width
-                    if h < -60 { showMetadata = true }
-                    if h > 80  { dismiss() }
-                    // swipe right from leading edge only
-                    if w > 100 && abs(w) > abs(h) * 2 { dismiss() }
+                    let isVertical = abs(h) > abs(w) * 1.5
+                    if isVertical && h > 120 {
+                        dismiss()
+                    } else if isVertical && h < -80 {
+                        showMetadata = true
+                    }
+                    withAnimation(.spring(duration: 0.25)) { dragOffset = 0 }
                 }
         )
         .sheet(isPresented: $showMetadata) {
@@ -193,6 +200,12 @@ private struct MetadataSheet: View {
     @State private var record: BackupRecord?
     @State private var fileSize: Int64?
     @State private var location: CLPlacemark?
+    @State private var downloading = false
+    @State private var downloadResult: DownloadResult?
+
+    enum DownloadResult {
+        case success, error(String)
+    }
 
     var body: some View {
         NavigationStack {
@@ -265,6 +278,35 @@ private struct MetadataSheet: View {
                         if let err = rec.error {
                             LabeledRow(label: "Error", value: err)
                         }
+                        if rec.status == .uploaded {
+                            Button {
+                                Task { await downloadFromCloud(record: rec) }
+                            } label: {
+                                HStack {
+                                    if downloading {
+                                        ProgressView().controlSize(.small)
+                                        Text("Downloading…")
+                                    } else {
+                                        Image(systemName: "icloud.and.arrow.down")
+                                        Text("Download from Cloud")
+                                    }
+                                }
+                            }
+                            .disabled(downloading)
+
+                            if let result = downloadResult {
+                                switch result {
+                                case .success:
+                                    Label("Saved to Photos", systemImage: "checkmark.circle.fill")
+                                        .foregroundStyle(.green)
+                                        .font(.caption)
+                                case .error(let msg):
+                                    Label(msg, systemImage: "exclamation.triangle.fill")
+                                        .foregroundStyle(.red)
+                                        .font(.caption)
+                                }
+                            }
+                        }
                     } else {
                         LabeledRow(label: "Status", value: "Not queued")
                     }
@@ -285,6 +327,46 @@ private struct MetadataSheet: View {
 
             if let loc = asset.location {
                 location = try? await CLGeocoder().reverseGeocodeLocation(loc).first
+            }
+        }
+    }
+
+    // MARK: - Cloud download
+
+    private func downloadFromCloud(record: BackupRecord) async {
+        downloading = true
+        downloadResult = nil
+        defer { downloading = false }
+
+        guard let cs = KeychainHelper.load(key: KeychainHelper.connectionStringKey),
+              let container = KeychainHelper.load(key: KeychainHelper.containerNameKey),
+              let config = try? AzureConfig.parse(connectionString: cs, containerName: container) else {
+            downloadResult = .error("Azure not configured")
+            return
+        }
+
+        let blob = AzureBlobService(config: config)
+        do {
+            let data = try await blob.downloadBlob(blobName: record.blobName)
+            try await saveToPhotos(data: data, mediaType: record.mediaType)
+            downloadResult = .success
+        } catch {
+            downloadResult = .error(error.localizedDescription)
+        }
+    }
+
+    private func saveToPhotos(data: Data, mediaType: String) async throws {
+        if mediaType == "video" {
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString + ".MOV")
+            try data.write(to: tempURL)
+            try await PHPhotoLibrary.shared().performChanges {
+                PHAssetCreationRequest.forAsset().addResource(with: .video, fileURL: tempURL, options: nil)
+            }
+            try? FileManager.default.removeItem(at: tempURL)
+        } else {
+            try await PHPhotoLibrary.shared().performChanges {
+                PHAssetCreationRequest.forAsset().addResource(with: .photo, data: data, options: nil)
             }
         }
     }

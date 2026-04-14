@@ -44,6 +44,10 @@ struct BackupSourcesView: View {
         .navigationTitle("Backup Sources")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { selection.loadAvailableAlbums() }
+        .onDisappear {
+            // Purge records that no longer match, re-scan for newly added albums.
+            Task { await BackupEngine.shared.resyncSelection() }
+        }
     }
 }
 

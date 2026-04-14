@@ -42,9 +42,27 @@ final class AzureBlobServiceTests: XCTestCase {
         XCTAssertEqual(req.value(forHTTPHeaderField: "x-ms-blob-type"), "BlockBlob")
     }
 
-    func testUploadRequestHasAccessTierCold() throws {
+    func testUploadRequestOmitsAccessTierByDefault() throws {
         let req = try service.uploadRequest(blobName: "f.HEIC", contentType: "image/heic", fileSize: 1)
-        XCTAssertEqual(req.value(forHTTPHeaderField: "x-ms-access-tier"), "Cold")
+        XCTAssertNil(req.value(forHTTPHeaderField: "x-ms-access-tier"))
+    }
+
+    func testUploadRequestIncludesAccessTierWhenProvided() throws {
+        let req = try service.uploadRequest(blobName: "f.HEIC", contentType: "image/heic", fileSize: 1, accessTier: "Cool")
+        XCTAssertEqual(req.value(forHTTPHeaderField: "x-ms-access-tier"), "Cool")
+    }
+
+    func testUploadRequestWithTierIsSignedCorrectly() throws {
+        // The tier header is x-ms-*, so it MUST be included in the HMAC signature.
+        // Verify the Authorization header exists (signing didn't throw).
+        let req = try service.uploadRequest(blobName: "f.HEIC", contentType: "image/heic", fileSize: 1, accessTier: "Hot")
+        let auth = try XCTUnwrap(req.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertTrue(auth.hasPrefix("SharedKey "))
+    }
+
+    func testApiVersionIs2024() throws {
+        let req = try service.uploadRequest(blobName: "f.HEIC", contentType: "image/heic", fileSize: 1)
+        XCTAssertEqual(req.value(forHTTPHeaderField: "x-ms-version"), "2024-11-04")
     }
 
     func testUploadRequestAuthorizationHeaderUsesSharedKey() throws {
@@ -92,6 +110,39 @@ final class AzureBlobServiceTests: XCTestCase {
             r1.value(forHTTPHeaderField: "Authorization"),
             r2.value(forHTTPHeaderField: "Authorization")
         )
+    }
+
+    // MARK: - 403 regression: no x-ms-* headers added after signing
+
+    /// Regression test for the bug where `x-ms-client-request-id` was stamped onto the
+    /// request after `sign()` ran. Azure includes ALL x-ms-* headers when verifying the
+    /// HMAC-SHA256 signature — an unsigned x-ms-* header produces a 403.
+    ///
+    /// The fix: `uploadRequest` must return a fully-signed, immutable request.
+    /// Callers must NOT mutate any x-ms-* header after this point.
+    func testUploadRequestHasNoClientRequestIdHeader() throws {
+        let req = try service.uploadRequest(blobName: "f.HEIC", contentType: "image/heic", fileSize: 1024)
+        XCTAssertNil(
+            req.value(forHTTPHeaderField: "x-ms-client-request-id"),
+            "x-ms-client-request-id must not be set — adding any x-ms-* header post-sign breaks the HMAC signature"
+        )
+    }
+
+    func testUploadRequestSignedHeadersMatchCanonicalizedHeaders() throws {
+        // Every x-ms-* header present in the request must be covered by the Authorization
+        // signature. Verify by confirming the Authorization header exists and was built from
+        // exactly the headers present (i.e., no stray x-ms-* headers were added afterwards).
+        let req = try service.uploadRequest(blobName: "f.HEIC", contentType: "image/heic", fileSize: 512)
+        let xmsHeaders = req.allHTTPHeaderFields?
+            .keys
+            .filter { $0.lowercased().hasPrefix("x-ms-") }
+            .sorted() ?? []
+
+        // The only x-ms-* headers uploadRequest should set are: x-ms-date, x-ms-version,
+        // x-ms-blob-type. All three must be present and signed.
+        let expected: Set<String> = ["x-ms-date", "x-ms-version", "x-ms-blob-type"]
+        XCTAssertEqual(Set(xmsHeaders.map { $0.lowercased() }), expected,
+                       "Unexpected x-ms-* headers found — any addition after sign() will break auth")
     }
 
     // MARK: - AzureError descriptions

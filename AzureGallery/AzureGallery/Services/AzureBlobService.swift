@@ -9,23 +9,51 @@ import CryptoKit
 ///
 /// Reference: https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key
 struct AzureBlobService {
-    private static let apiVersion = "2020-04-08"
+    private static let apiVersion = "2024-11-04"
 
     let config: AzureConfig
 
     // MARK: - Public API
 
     /// Build a signed URLRequest for uploading a blob (to be used with URLSession background task).
-    func uploadRequest(blobName: String, contentType: String, fileSize: Int64) throws -> URLRequest {
+    func uploadRequest(blobName: String, contentType: String, fileSize: Int64, accessTier: String? = nil) throws -> URLRequest {
         let url = config.blobURL(blobName: blobName)
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
         request.setValue(String(fileSize), forHTTPHeaderField: "Content-Length")
         request.setValue("BlockBlob", forHTTPHeaderField: "x-ms-blob-type")
-        request.setValue("Cold", forHTTPHeaderField: "x-ms-access-tier")
+        if let tier = accessTier {
+            request.setValue(tier, forHTTPHeaderField: "x-ms-access-tier")
+        }
+        // All x-ms-* headers MUST be set before sign() — they are included in the HMAC.
         try sign(&request, contentLength: fileSize, contentType: contentType)
         return request
+    }
+
+    /// Download a blob's contents.
+    func downloadBlob(blobName: String) async throws -> Data {
+        let url = config.blobURL(blobName: blobName)
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        try sign(&request, contentLength: 0, contentType: "")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard code == 200 else { throw AzureError.unexpectedStatus(code) }
+        return data
+    }
+
+    /// Download a range of bytes from a blob (Range GET).
+    func downloadBlobRange(blobName: String, offset: Int64 = 0, length: Int64 = 65536) async throws -> Data {
+        let url = config.blobURL(blobName: blobName)
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("bytes=\(offset)-\(offset + length - 1)", forHTTPHeaderField: "Range")
+        try sign(&request, contentLength: 0, contentType: "")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard code == 200 || code == 206 else { throw AzureError.unexpectedStatus(code) }
+        return data
     }
 
     /// Check if a blob exists (HEAD request). Returns true if 200, false if 404.
@@ -106,7 +134,7 @@ struct AzureBlobService {
             "",          // If-Match
             "",          // If-None-Match
             "",          // If-Unmodified-Since
-            "",          // Range
+            request.value(forHTTPHeaderField: "Range") ?? "",
             canonicalizedHeaders,
             canonicalizedResource
         ].joined(separator: "\n")

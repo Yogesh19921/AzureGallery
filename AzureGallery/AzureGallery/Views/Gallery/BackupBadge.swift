@@ -31,9 +31,12 @@ enum BackupBadge {
     }
 
     private static func preload() {
-        loaded = true
-        guard let rows = try? DatabaseService.shared.allRecords() else { return }
+        guard let rows = try? DatabaseService.shared.allRecords() else {
+            // DB not ready yet — leave loaded=false so the next call retries.
+            return
+        }
         cache = Dictionary(uniqueKeysWithValues: rows.map { ($0.assetId, $0) })
+        loaded = true   // only after data is actually in the cache
     }
 }
 

@@ -35,14 +35,13 @@ struct AzureGalleryApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     @State private var photoLibrary = PhotoLibraryService()
-    @State private var stats: BackupStats = .empty
 
     /// Persisted appearance preference. Defaults to "System" on first launch.
     @AppStorage("appearanceMode") private var appearanceMode = AppearanceMode.system
 
     var body: some Scene {
         WindowGroup {
-            ContentView(stats: stats)
+            ContentView()
                 .environment(photoLibrary)
                 // nil = follow iOS system setting; .light/.dark = override
                 .preferredColorScheme(appearanceMode.colorScheme)
@@ -53,15 +52,9 @@ struct AzureGalleryApp: App {
                         print("DB setup failed: \(error)")
                     }
                     await photoLibrary.requestAuthorization()
+                    NotificationService.requestPermission()
                     await BackupEngine.shared.start(photoLibrary: photoLibrary)
-                    refreshStats()
                 }
-        }
-    }
-
-    private func refreshStats() {
-        Task {
-            stats = (try? DatabaseService.shared.stats(totalInLibrary: photoLibrary.totalCount)) ?? .empty
         }
     }
 }
