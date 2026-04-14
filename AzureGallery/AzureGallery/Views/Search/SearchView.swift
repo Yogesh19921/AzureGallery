@@ -1,10 +1,18 @@
 import SwiftUI
 import Photos
 
+private struct SearchSelection: Identifiable {
+    let id: String  // assetId
+    let fetchResult: PHFetchResult<PHAsset>
+    let index: Int
+}
+
 struct SearchView: View {
     @State private var query = ""
     @State private var results: [BackupRecord] = []
     @State private var activeFilter: QuickFilter?
+    @State private var selectedPhoto: SearchSelection?
+    private let emb = EmbeddingService.shared
 
     enum QuickFilter: String, CaseIterable {
         case hasText     = "Has Text"
@@ -16,11 +24,86 @@ struct SearchView: View {
         case animal      = "Animal"
     }
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 3)
+    private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                // Search bar
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search photos…", text: $query)
+                        .textFieldStyle(.plain)
+                        .autocorrectionDisabled()
+                        .submitLabel(.search)
+                        .onSubmit { search() }
+                    if !query.isEmpty {
+                        Button { query = ""; results = [] } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .padding(10)
+                .background(Color(.systemGray5), in: RoundedRectangle(cornerRadius: 10))
+                .padding(.horizontal)
+                .padding(.top, 8)
+
+                // Indexing status — always visible when running
+                if emb.isIndexing {
+                    VStack(spacing: 8) {
+                        HStack {
+                            Image(systemName: "sparkles")
+                                .foregroundStyle(.blue)
+                            Text("Making your photos searchable…")
+                                .font(.subheadline.weight(.medium))
+                            Spacer()
+                            Button("Stop") { emb.cancelIndexing() }
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
+                        }
+                        ProgressView(value: emb.indexTotal > 0 ? Double(emb.indexProgress) / Double(emb.indexTotal) : 0)
+                            .tint(.blue)
+                        Text("\(emb.indexProgress) of \(emb.indexTotal) photos — you can search while this runs")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding()
+                    .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                }
+
+                // Not indexed yet — show prompt
+                else if query.isEmpty && activeFilter == nil,
+                        (try? DatabaseService.shared.assetIdsWithoutEmbedding(limit: 1))?.isEmpty == false {
+                    VStack(spacing: 8) {
+                        HStack {
+                            Image(systemName: "sparkles")
+                                .foregroundStyle(.orange)
+                            Text("Search works better with AI")
+                                .font(.subheadline.weight(.medium))
+                            Spacer()
+                        }
+                        Text("Tap below to teach the app what's in your photos. This takes a few minutes and runs entirely on your device.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button {
+                            Task { await emb.indexAll() }
+                        } label: {
+                            Label("Enable Smart Search", systemImage: "bolt.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                    .padding()
+                    .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                }
+
                 // Quick filter chips
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -52,18 +135,24 @@ struct SearchView: View {
                         LazyVGrid(columns: columns, spacing: 2) {
                             ForEach(results) { record in
                                 SearchThumbnail(record: record)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { openPhoto(record) }
                             }
                         }
                     }
                 }
             }
             .navigationTitle("Search")
-            .searchable(text: $query, prompt: "Scene, faces, text…")
-            .onSubmit(of: .search) { search() }
-            .onChange(of: query) { _, newVal in
-                if newVal.isEmpty && activeFilter == nil { results = [] }
+            .fullScreenCover(item: $selectedPhoto) { selection in
+                PhotoDetailView(fetchResult: selection.fetchResult, currentIndex: selection.index)
             }
         }
+    }
+
+    private func openPhoto(_ record: BackupRecord) {
+        let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [record.assetId], options: nil)
+        guard fetchResult.count > 0 else { return }
+        selectedPhoto = SearchSelection(id: record.assetId, fetchResult: fetchResult, index: 0)
     }
 
     private func search() {
@@ -84,18 +173,19 @@ struct SearchView: View {
         default: break
         }
 
-        // Semantic search: expand free-text query into matching scene labels via NLEmbedding
+        // Keyword search — precise matching against Vision labels, animal labels, and OCR text.
+        // No embedding averaging (which causes false positives like "cat" returning people).
         if !query.isEmpty && sceneKw == nil {
             var merged: [String: BackupRecord] = [:]
 
-            // 1. Direct keyword match against all searchable columns (raw query)
+            // 1. Direct match against sceneLabels + animalLabels (exact substring)
             let direct = (try? DatabaseService.shared.searchRecords(
                 hasText: hasText, minFaces: minFaces, sceneKeyword: query
             )) ?? []
             for r in direct { merged[r.assetId] = r }
 
-            // 2. Semantic expansion — find related labels via NLEmbedding
-            let expanded = SemanticSearchService.expandQuery(query)
+            // 2. Semantic expansion — only closely related labels (stricter threshold)
+            let expanded = SemanticSearchService.expandQuery(query, topN: 3)
             for kw in expanded where kw != query.lowercased() {
                 let partial = (try? DatabaseService.shared.searchRecords(
                     hasText: hasText, minFaces: minFaces, sceneKeyword: kw
@@ -134,26 +224,30 @@ private struct SearchThumbnail: View {
                 Image(uiImage: img)
                     .resizable()
                     .scaledToFill()
-                    .frame(width: cellSize, height: cellSize)
-                    .clipped()
             } else {
                 Rectangle()
                     .fill(Color(.systemGray5))
-                    .frame(width: cellSize, height: cellSize)
             }
+        }
+        .frame(width: cellSize, height: cellSize)
+        .clipped()
+        .overlay(alignment: .bottomTrailing) {
             BackupCloudBadge(assetId: record.assetId)
                 .padding(4)
         }
         .task(id: record.assetId) {
             let assets = PHAsset.fetchAssets(withLocalIdentifiers: [record.assetId], options: nil)
             guard let asset = assets.firstObject else { return }
-            let size = CGSize(width: cellSize * 2, height: cellSize * 2)
+            // Request at screen scale for sharp thumbnails on Retina displays
+            let scale = UIScreen.main.scale
+            let pixelSize = CGSize(width: cellSize * scale, height: cellSize * scale)
+            let opts = PHImageRequestOptions()
+            opts.deliveryMode = .highQualityFormat  // single callback — safe with continuation
+            opts.resizeMode = .exact
+            opts.isNetworkAccessAllowed = true
             image = await withCheckedContinuation { cont in
-                let opts = PHImageRequestOptions()
-                opts.deliveryMode = .fastFormat
-                opts.isNetworkAccessAllowed = true
                 PHImageManager.default().requestImage(
-                    for: asset, targetSize: size, contentMode: .aspectFill, options: opts
+                    for: asset, targetSize: pixelSize, contentMode: .aspectFill, options: opts
                 ) { img, _ in cont.resume(returning: img) }
             }
         }

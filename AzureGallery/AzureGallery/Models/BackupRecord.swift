@@ -44,6 +44,10 @@ struct BackupRecord: Identifiable, Sendable {
     var recognizedText: String?
     /// JSON-encoded [String] of animal labels detected by Vision.
     var animalLabels: String?
+    /// CLIP image embedding (512 x Float32 = 2048 bytes). Nil until computed.
+    var embedding: Data?
+    /// AI-generated description of the photo. Nil until captioned.
+    var caption: String?
 
     init(
         assetId: String,
@@ -66,6 +70,8 @@ struct BackupRecord: Identifiable, Sendable {
         self.contentHash = nil
         self.recognizedText = nil
         self.animalLabels = nil
+        self.embedding = nil
+        self.caption = nil
     }
 
     /// Decoded scene labels from the JSON-encoded `sceneLabels` column.
@@ -104,6 +110,8 @@ extension BackupRecord: FetchableRecord {
         contentHash    = row["contentHash"]
         recognizedText = row["recognizedText"]
         animalLabels   = row["animalLabels"]
+        embedding      = row["embedding"]
+        caption        = row["caption"]
     }
 }
 
@@ -126,6 +134,8 @@ extension BackupRecord: MutablePersistableRecord {
         container["contentHash"]    = contentHash
         container["recognizedText"] = recognizedText
         container["animalLabels"]   = animalLabels
+        container["embedding"]      = embedding
+        container["caption"]        = caption
     }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {

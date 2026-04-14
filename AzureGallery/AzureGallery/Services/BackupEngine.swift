@@ -315,7 +315,7 @@ final class BackupEngine: NSObject {
             AppLogger.shared.info("[\(shortId)] Starting upload: \(blobShort)", tag: "BackupEngine")
         }
 
-        // Vision analysis before upload — non-blocking, best-effort
+        // Vision analysis + embedding before upload — non-blocking, best-effort
         let analysis = await VisionService.shared.analyze(asset: asset)
         try? db.updateVisionMetadata(
             assetId: record.assetId,
@@ -325,6 +325,20 @@ final class BackupEngine: NSObject {
             recognizedText: analysis.recognizedText,
             animalLabels: analysis.animalLabels
         )
+        // Compute image embedding for similarity search
+        if let cgImage = await loadThumbnail(for: asset) {
+            let embData = await Task.detached(priority: .utility) {
+                EmbeddingService.shared.embedImage(cgImage)
+            }.value
+            if let embData {
+                try? db.updateEmbedding(assetId: record.assetId, embedding: embData)
+            }
+        }
+        // AI caption from Vision metadata (uses LLM on iOS 26+, raw labels as fallback)
+        if let updatedRecord = try? db.record(for: record.assetId),
+           let caption = await CaptionService.shared.captionFromMetadata(record: updatedRecord) {
+            try? db.updateCaption(assetId: record.assetId, caption: caption)
+        }
 
         // Pre-create the active upload item so iCloud progress can be shown before the
         // background upload starts. It will be updated with file size after export.
@@ -457,6 +471,19 @@ final class BackupEngine: NSObject {
             return nil
         }
         return provider
+    }
+
+    private func loadThumbnail(for asset: PHAsset) async -> CGImage? {
+        await withCheckedContinuation { continuation in
+            let opts = PHImageRequestOptions()
+            opts.deliveryMode = .fastFormat
+            opts.isNetworkAccessAllowed = false
+            opts.isSynchronous = false
+            PHImageManager.default().requestImage(
+                for: asset, targetSize: CGSize(width: 384, height: 384),
+                contentMode: .aspectFit, options: opts
+            ) { img, _ in continuation.resume(returning: img?.cgImage) }
+        }
     }
 
     /// After primary upload succeeds, mirror the blob to additional enabled providers.

@@ -75,6 +75,18 @@ final class DatabaseService {
             }
         }
 
+        migrator.registerMigration("v6_embeddings") { db in
+            try db.alter(table: "backups") { t in
+                t.add(column: "embedding", .blob)         // 512 x Float32 = 2048 bytes
+            }
+        }
+
+        migrator.registerMigration("v7_ai_caption") { db in
+            try db.alter(table: "backups") { t in
+                t.add(column: "caption", .text)           // AI-generated description
+            }
+        }
+
         try migrator.migrate(dbQueue)
     }
 
@@ -94,6 +106,40 @@ final class DatabaseService {
                 arguments: ["fc": faceCount, "sl": labelsJSON, "ht": hasText,
                             "ocr": ocrText, "al": animalsJSON, "id": assetId]
             )
+        }
+    }
+
+    func updateCaption(assetId: String, caption: String) throws {
+        try dbQueue.write { db in
+            try db.execute(sql: "UPDATE backups SET caption = :cap WHERE assetId = :id",
+                           arguments: ["cap": caption, "id": assetId])
+        }
+    }
+
+    func assetIdsWithoutCaption(limit: Int = 50) throws -> [String] {
+        try dbQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT assetId FROM backups WHERE caption IS NULL LIMIT ?", arguments: [limit])
+        }
+    }
+
+    func updateEmbedding(assetId: String, embedding: Data) throws {
+        try dbQueue.write { db in
+            try db.execute(sql: "UPDATE backups SET embedding = :emb WHERE assetId = :id",
+                           arguments: ["emb": embedding, "id": assetId])
+        }
+    }
+
+    func assetIdsWithoutEmbedding(limit: Int = 50) throws -> [String] {
+        try dbQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT assetId FROM backups WHERE embedding IS NULL LIMIT ?", arguments: [limit])
+        }
+    }
+
+    /// Returns all (assetId, embedding) pairs for cosine similarity search.
+    func allEmbeddings() throws -> [(assetId: String, embedding: Data)] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: "SELECT assetId, embedding FROM backups WHERE embedding IS NOT NULL")
+            return rows.map { (assetId: ($0["assetId"] as String), embedding: ($0["embedding"] as Data)) }
         }
     }
 
@@ -122,12 +168,12 @@ final class DatabaseService {
             if hasText == true { conditions.append("hasText = 1") }
             if let min = minFaces { conditions.append("faceCount >= ?"); args.append(min) }
             if let kw = sceneKeyword, !kw.isEmpty {
-                conditions.append("(sceneLabels LIKE ? OR animalLabels LIKE ?)")
-                args.append("%\(kw)%"); args.append("%\(kw)%")
+                conditions.append("(sceneLabels LIKE ? OR animalLabels LIKE ? OR caption LIKE ?)")
+                args.append("%\(kw)%"); args.append("%\(kw)%"); args.append("%\(kw)%")
             }
             if let tq = textQuery, !tq.isEmpty {
-                conditions.append("recognizedText LIKE ?")
-                args.append("%\(tq)%")
+                conditions.append("(recognizedText LIKE ? OR caption LIKE ?)")
+                args.append("%\(tq)%"); args.append("%\(tq)%")
             }
             let whereClause = conditions.isEmpty ? "" : "WHERE " + conditions.joined(separator: " AND ")
             let sql = "SELECT * FROM backups \(whereClause) LIMIT ?"

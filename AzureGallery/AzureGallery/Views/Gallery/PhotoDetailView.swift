@@ -319,6 +319,16 @@ private struct MetadataSheet: View {
 
                 if let rec = record {
                     Section("AI Analysis") {
+                        if let caption = rec.caption {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Label("AI Description", systemImage: "sparkles")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.blue)
+                                Text(caption)
+                                    .font(.subheadline)
+                            }
+                            .padding(.vertical, 2)
+                        }
                         if let fc = rec.faceCount, fc > 0 {
                             LabeledRow(label: "Faces", value: "\(fc)")
                         }
@@ -328,7 +338,7 @@ private struct MetadataSheet: View {
                         if rec.hasText {
                             LabeledRow(label: "Contains Text", value: "Yes")
                         }
-                        if rec.faceCount == nil && rec.sceneLabelsArray.isEmpty && !rec.hasText {
+                        if rec.faceCount == nil && rec.sceneLabelsArray.isEmpty && !rec.hasText && rec.caption == nil {
                             Text("Not yet analysed — will run before backup")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)

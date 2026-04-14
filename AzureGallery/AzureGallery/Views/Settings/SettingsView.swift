@@ -95,10 +95,40 @@ struct SettingsView: View {
                             Task { await BackupEngine.shared.reanalyzeExisting() }
                         }
                     }
+
+                    let emb = EmbeddingService.shared
+                    if emb.isIndexing {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Indexing \(emb.indexProgress)/\(emb.indexTotal)…")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Button("Build Search Index") {
+                            Task { await EmbeddingService.shared.indexAll() }
+                        }
+                    }
+
+                    let cap = CaptionService.shared
+                    if cap.isAvailable {
+                        if cap.isRunning {
+                            HStack {
+                                ProgressView().controlSize(.small)
+                                Text("Captioning \(cap.progress)/\(cap.total)…")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Button("Generate AI Descriptions") {
+                                Task { await CaptionService.shared.captionAll() }
+                            }
+                        }
+                    }
                 } header: {
                     Text("Search & AI")
                 } footer: {
-                    Text("Runs Vision AI on existing photos to enable search by content (animals, text, scenes). Only needed once.")
+                    Text("All AI runs on-device — no data leaves your phone. Descriptions use Apple Intelligence (iOS 26+, iPhone 15 Pro+).")
                 }
 
                 Section("Diagnostics") {
