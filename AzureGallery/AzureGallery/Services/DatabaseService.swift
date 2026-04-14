@@ -109,39 +109,7 @@ final class DatabaseService {
         }
     }
 
-    func updateCaption(assetId: String, caption: String) throws {
-        try dbQueue.write { db in
-            try db.execute(sql: "UPDATE backups SET caption = :cap WHERE assetId = :id",
-                           arguments: ["cap": caption, "id": assetId])
-        }
-    }
-
-    func assetIdsWithoutCaption(limit: Int = 50) throws -> [String] {
-        try dbQueue.read { db in
-            try String.fetchAll(db, sql: "SELECT assetId FROM backups WHERE caption IS NULL LIMIT ?", arguments: [limit])
-        }
-    }
-
-    func updateEmbedding(assetId: String, embedding: Data) throws {
-        try dbQueue.write { db in
-            try db.execute(sql: "UPDATE backups SET embedding = :emb WHERE assetId = :id",
-                           arguments: ["emb": embedding, "id": assetId])
-        }
-    }
-
-    func assetIdsWithoutEmbedding(limit: Int = 50) throws -> [String] {
-        try dbQueue.read { db in
-            try String.fetchAll(db, sql: "SELECT assetId FROM backups WHERE embedding IS NULL LIMIT ?", arguments: [limit])
-        }
-    }
-
-    /// Returns all (assetId, embedding) pairs for cosine similarity search.
-    func allEmbeddings() throws -> [(assetId: String, embedding: Data)] {
-        try dbQueue.read { db in
-            let rows = try Row.fetchAll(db, sql: "SELECT assetId, embedding FROM backups WHERE embedding IS NOT NULL")
-            return rows.map { (assetId: ($0["assetId"] as String), embedding: ($0["embedding"] as Data)) }
-        }
-    }
+    // Embedding and caption DB methods removed — migrations kept for schema compatibility.
 
     // MARK: - Queries
 

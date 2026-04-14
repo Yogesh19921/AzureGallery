@@ -120,6 +120,11 @@ final class BackupEngine: NSObject {
             for assetId in batch {
                 let assets = PHAsset.fetchAssets(withLocalIdentifiers: [assetId], options: nil)
                 guard let asset = assets.firstObject else {
+                    // Photo deleted — write empty metadata so we don't loop forever
+                    try? db.updateVisionMetadata(
+                        assetId: assetId, faceCount: nil, sceneLabels: [], hasText: false,
+                        recognizedText: [], animalLabels: []
+                    )
                     await MainActor.run { progress.completed += 1 }
                     continue
                 }
@@ -325,21 +330,6 @@ final class BackupEngine: NSObject {
             recognizedText: analysis.recognizedText,
             animalLabels: analysis.animalLabels
         )
-        // Compute image embedding for similarity search
-        if let cgImage = await loadThumbnail(for: asset) {
-            let embData = await Task.detached(priority: .utility) {
-                EmbeddingService.shared.embedImage(cgImage)
-            }.value
-            if let embData {
-                try? db.updateEmbedding(assetId: record.assetId, embedding: embData)
-            }
-        }
-        // AI caption from Vision metadata (uses LLM on iOS 26+, raw labels as fallback)
-        if let updatedRecord = try? db.record(for: record.assetId),
-           let caption = await CaptionService.shared.captionFromMetadata(record: updatedRecord) {
-            try? db.updateCaption(assetId: record.assetId, caption: caption)
-        }
-
         // Pre-create the active upload item so iCloud progress can be shown before the
         // background upload starts. It will be updated with file size after export.
         let originalName = PHAssetResource.assetResources(for: asset).first?.originalFilename
@@ -471,19 +461,6 @@ final class BackupEngine: NSObject {
             return nil
         }
         return provider
-    }
-
-    private func loadThumbnail(for asset: PHAsset) async -> CGImage? {
-        await withCheckedContinuation { continuation in
-            let opts = PHImageRequestOptions()
-            opts.deliveryMode = .fastFormat
-            opts.isNetworkAccessAllowed = false
-            opts.isSynchronous = false
-            PHImageManager.default().requestImage(
-                for: asset, targetSize: CGSize(width: 384, height: 384),
-                contentMode: .aspectFit, options: opts
-            ) { img, _ in continuation.resume(returning: img?.cgImage) }
-        }
     }
 
     /// After primary upload succeeds, mirror the blob to additional enabled providers.

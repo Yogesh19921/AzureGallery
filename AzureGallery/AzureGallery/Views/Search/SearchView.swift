@@ -2,7 +2,7 @@ import SwiftUI
 import Photos
 
 private struct SearchSelection: Identifiable {
-    let id: String  // assetId
+    let id: String
     let fetchResult: PHFetchResult<PHAsset>
     let index: Int
 }
@@ -12,7 +12,6 @@ struct SearchView: View {
     @State private var results: [BackupRecord] = []
     @State private var activeFilter: QuickFilter?
     @State private var selectedPhoto: SearchSelection?
-    private let emb = EmbeddingService.shared
 
     enum QuickFilter: String, CaseIterable {
         case hasText     = "Has Text"
@@ -29,7 +28,7 @@ struct SearchView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Search bar
+                // Search bar — full width tappable
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
@@ -45,64 +44,11 @@ struct SearchView: View {
                         }
                     }
                 }
-                .padding(10)
+                .padding(12)
+                .contentShape(Rectangle())
                 .background(Color(.systemGray5), in: RoundedRectangle(cornerRadius: 10))
                 .padding(.horizontal)
                 .padding(.top, 8)
-
-                // Indexing status — always visible when running
-                if emb.isIndexing {
-                    VStack(spacing: 8) {
-                        HStack {
-                            Image(systemName: "sparkles")
-                                .foregroundStyle(.blue)
-                            Text("Making your photos searchable…")
-                                .font(.subheadline.weight(.medium))
-                            Spacer()
-                            Button("Stop") { emb.cancelIndexing() }
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(.secondary)
-                        }
-                        ProgressView(value: emb.indexTotal > 0 ? Double(emb.indexProgress) / Double(emb.indexTotal) : 0)
-                            .tint(.blue)
-                        Text("\(emb.indexProgress) of \(emb.indexTotal) photos — you can search while this runs")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding()
-                    .background(.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                    .padding(.horizontal)
-                    .padding(.top, 8)
-                }
-
-                // Not indexed yet — show prompt
-                else if query.isEmpty && activeFilter == nil,
-                        (try? DatabaseService.shared.assetIdsWithoutEmbedding(limit: 1))?.isEmpty == false {
-                    VStack(spacing: 8) {
-                        HStack {
-                            Image(systemName: "sparkles")
-                                .foregroundStyle(.orange)
-                            Text("Search works better with AI")
-                                .font(.subheadline.weight(.medium))
-                            Spacer()
-                        }
-                        Text("Tap below to teach the app what's in your photos. This takes a few minutes and runs entirely on your device.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Button {
-                            Task { await emb.indexAll() }
-                        } label: {
-                            Label("Enable Smart Search", systemImage: "bolt.fill")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                    }
-                    .padding()
-                    .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-                    .padding(.horizontal)
-                    .padding(.top, 8)
-                }
 
                 // Quick filter chips
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -173,18 +119,16 @@ struct SearchView: View {
         default: break
         }
 
-        // Keyword search — precise matching against Vision labels, animal labels, and OCR text.
-        // No embedding averaging (which causes false positives like "cat" returning people).
         if !query.isEmpty && sceneKw == nil {
             var merged: [String: BackupRecord] = [:]
 
-            // 1. Direct match against sceneLabels + animalLabels (exact substring)
+            // 1. Direct match against sceneLabels + animalLabels + captions
             let direct = (try? DatabaseService.shared.searchRecords(
                 hasText: hasText, minFaces: minFaces, sceneKeyword: query
             )) ?? []
             for r in direct { merged[r.assetId] = r }
 
-            // 2. Semantic expansion — only closely related labels (stricter threshold)
+            // 2. Semantic expansion — closely related labels
             let expanded = SemanticSearchService.expandQuery(query, topN: 3)
             for kw in expanded where kw != query.lowercased() {
                 let partial = (try? DatabaseService.shared.searchRecords(
@@ -238,11 +182,10 @@ private struct SearchThumbnail: View {
         .task(id: record.assetId) {
             let assets = PHAsset.fetchAssets(withLocalIdentifiers: [record.assetId], options: nil)
             guard let asset = assets.firstObject else { return }
-            // Request at screen scale for sharp thumbnails on Retina displays
             let scale = UIScreen.main.scale
             let pixelSize = CGSize(width: cellSize * scale, height: cellSize * scale)
             let opts = PHImageRequestOptions()
-            opts.deliveryMode = .highQualityFormat  // single callback — safe with continuation
+            opts.deliveryMode = .highQualityFormat
             opts.resizeMode = .exact
             opts.isNetworkAccessAllowed = true
             image = await withCheckedContinuation { cont in

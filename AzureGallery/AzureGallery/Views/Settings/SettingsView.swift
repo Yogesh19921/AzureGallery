@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct SettingsView: View {
     @State private var showAzureSetup = false
@@ -13,7 +14,9 @@ struct SettingsView: View {
     @AppStorage("storageTier") private var storageTier = "Cold"
     @AppStorage("maxConcurrentUploads") private var maxConcurrentUploads = 10
 
-    private var isConfigured: Bool { KeychainHelper.load(key: KeychainHelper.connectionStringKey) != nil }
+    @State private var activeProviderCount = 0
+    @State private var isAnalyzing = false
+    @State private var analysisText = ""
 
     var body: some View {
         NavigationStack {
@@ -25,9 +28,8 @@ struct SettingsView: View {
                         HStack {
                             Label("Providers", systemImage: "cloud")
                             Spacer()
-                            let count = CloudProviderType.allCases.filter { $0.isConfigured && $0.isEnabled }.count
-                            Text(count > 0 ? "\(count) active" : "Not set up")
-                                .foregroundStyle(count > 0 ? .green : .secondary)
+                            Text(activeProviderCount > 0 ? "\(activeProviderCount) active" : "Not set up")
+                                .foregroundStyle(activeProviderCount > 0 ? .green : .secondary)
                                 .font(.caption)
                         }
                     }
@@ -40,7 +42,6 @@ struct SettingsView: View {
                     NavigationLink("Backup Sources") {
                         BackupSourcesView()
                     }
-
                     Toggle("Auto Backup", isOn: $autoBackupEnabled)
                         .onChange(of: autoBackupEnabled) {
                             UserDefaults.standard.set(autoBackupEnabled, forKey: "autoBackupEnabled")
@@ -82,53 +83,25 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    let progress = BackupEngine.analysisProgress
-                    if progress.isRunning {
+                    if isAnalyzing {
                         HStack {
                             ProgressView().controlSize(.small)
-                            Text("Analyzing \(progress.completed)/\(progress.total)…")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                            Text(analysisText)
+                                .font(.subheadline).foregroundStyle(.secondary)
                         }
                     } else {
                         Button("Re-analyze Library for Search") {
-                            Task { await BackupEngine.shared.reanalyzeExisting() }
-                        }
-                    }
-
-                    let emb = EmbeddingService.shared
-                    if emb.isIndexing {
-                        HStack {
-                            ProgressView().controlSize(.small)
-                            Text("Indexing \(emb.indexProgress)/\(emb.indexTotal)…")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        Button("Build Search Index") {
-                            Task { await EmbeddingService.shared.indexAll() }
-                        }
-                    }
-
-                    let cap = CaptionService.shared
-                    if cap.isAvailable {
-                        if cap.isRunning {
-                            HStack {
-                                ProgressView().controlSize(.small)
-                                Text("Captioning \(cap.progress)/\(cap.total)…")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } else {
-                            Button("Generate AI Descriptions") {
-                                Task { await CaptionService.shared.captionAll() }
+                            isAnalyzing = true
+                            Task {
+                                await BackupEngine.shared.reanalyzeExisting()
+                                isAnalyzing = false
                             }
                         }
                     }
                 } header: {
-                    Text("Search & AI")
+                    Text("Search")
                 } footer: {
-                    Text("All AI runs on-device — no data leaves your phone. Descriptions use Apple Intelligence (iOS 26+, iPhone 15 Pro+).")
+                    Text("Runs Vision AI on your photos to enable search by content (animals, text, scenes). Runs on-device.")
                 }
 
                 Section("Diagnostics") {
@@ -143,6 +116,21 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .task {
+                activeProviderCount = CloudProviderType.allCases.filter { $0.isConfigured && $0.isEnabled }.count
+            }
+            .onAppear {
+                activeProviderCount = CloudProviderType.allCases.filter { $0.isConfigured && $0.isEnabled }.count
+            }
+            .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
+                let ap = BackupEngine.analysisProgress
+                if ap.isRunning {
+                    isAnalyzing = true
+                    analysisText = "Analyzing \(ap.completed)/\(ap.total)…"
+                } else if isAnalyzing {
+                    isAnalyzing = false
+                }
+            }
             .sheet(isPresented: $showAzureSetup) {
                 AzureSetupView()
             }
