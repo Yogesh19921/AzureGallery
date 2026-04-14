@@ -1,8 +1,17 @@
 # AzureGallery
 
-**Back up your iPhone photos to your own cloud storage. 10x cheaper than iCloud.**
+**Back up your iPhone photos to your own cloud storage. 10-15x cheaper than iCloud.**
 
-50 GB on iCloud costs $11.88/year. The same on Azure Cold tier costs **$2.16/year**. On S3 Glacier IR: **$2.40/year**. You own the storage, no one else touches your photos.
+| Storage | iCloud | Google One | AzureGallery |
+|---------|--------|-----------|-------------|
+| 50 GB | $11.88/yr | $23.88/yr | **$2.16/yr** |
+| 100 GB | $11.88/yr | $23.88/yr | **$4.32/yr** |
+| 200 GB | $35.88/yr | $23.88/yr | **$8.64/yr** |
+| 1 TB | $131.88/yr | $131.88/yr | **$43.20/yr** |
+
+*Based on Azure Cold tier ($0.0036/GB/month). S3 and GCP are comparable. Uploads are free. Downloads (restore) cost ~$0.01/GB — a one-time 100 GB restore costs about $1.*
+
+You own the storage. No one else touches your photos.
 
 ## The Problem
 
@@ -20,14 +29,6 @@ Every photo backup service is a subscription you're locked into, controlled by s
 - **Storage dashboard** — see exactly how many blobs, how much storage, and estimated monthly cost per tier.
 - **Configurable** — Wi-Fi only, charge only, concurrent upload limit (1-20), storage tier (Hot/Cool/Cold/Archive), album-based backup selection.
 - **Diagnostic logs** — in-app logs with share button. Shake to export. Auto-expire after 24 hours.
-
-## Cost Comparison
-
-| Service | 50 GB/month | 50 GB/year |
-|---------|------------|-----------|
-| **AzureGallery (Cold)** | **$0.18** | **$2.16** |
-| iCloud | $0.99 | $11.88 |
-| Google One | $1.99 | $23.88 |
 
 ## Installation
 
