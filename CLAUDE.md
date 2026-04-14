@@ -101,3 +101,56 @@ Default tier is **Cold** (Azure Cold / S3 GLACIER_IR / GCP COLDLINE). Configurab
 ## Test Suites (261 tests)
 
 AppLoggerTests, AzureBlobServiceTests, AzureConfigTests, BackgroundTaskServiceTests, BackupEnginePauseTests, BackupRecordTests, BackupSelectionTests, BackupStatsTests, BackupWidgetDataTests, BlobNamingTests, DatabaseServiceTests, DeviceIdentifierTests, GCPBlobServiceTests, KeychainHelperTests, NetworkMonitorTests, NotificationServiceTests, OnboardingTests, S3BlobServiceTests, TabProgressTests
+
+## Edge Cases
+
+- **iCloud Photo Library**: Assets may be low-res placeholders. FileExporter requests `.current` delivery mode which triggers iCloud download transparently. Progress shown via cyan bar in Active Uploads.
+- **Live Photos**: Two blobs (HEIC + MOV) with same base name. ManifestManager tracks both under one logical asset.
+- **Large Videos**: 4K videos can be several GB. Background URLSession handles large files. Temp file disk space is the constraint.
+- **Photo Deletion**: Backups in cloud remain after local deletion (that's the point). RestoreView shows cloud-only files for download.
+- **Multi-Device**: `PHAsset.localIdentifier` is device-scoped. Device ID prefix in blob paths prevents collisions. SHA-256 content hash enables cross-device dedup.
+- **App Reinstall**: `DeviceIdentifier` uses `identifierForVendor` which resets on reinstall. New uploads get a new device prefix. Old blobs still accessible via HEAD check (conflict resolution skips re-upload).
+
+## Future Roadmap
+
+### Security
+- App lock (Face ID / passcode gate on launch)
+- Client-side encryption (AES-256-GCM before upload, user passphrase-derived key)
+- Secure wipe (delete local photos after confirmed upload, with undo window)
+
+### Reliability
+- Exponential backoff retry (instead of flat 3 retries)
+- Post-upload integrity check (HEAD blob, compare Content-MD5 with local hash)
+
+### Search
+- Full-text search on OCR results (stored but not indexed yet)
+- Date range filter in search view
+- Location-based search (GPS → reverse geocode → searchable place names)
+- Similar photo detection (VNFeaturePrint perceptual hash clustering)
+
+### Sync
+- Full device restore (bulk download all blobs back to device)
+- Selective sync (thumbnails local, full-res in cloud, download on demand)
+- Manifest sync (upload periodically so other devices discover backups)
+- Sync deletions (optional: remove cloud blob when local photo deleted)
+
+### UX
+- Photo editing (crop/rotate/filters)
+- Shared albums (SAS URL / presigned URL with expiry)
+- Favorites sync (star locally → tag blob metadata)
+- WidgetKit home screen widget
+- Siri Shortcuts ("Back up my photos")
+- iPad multi-column gallery
+- watchOS complication
+
+### Cost
+- Auto-cleanup old blobs (configurable retention policy)
+- Compression before upload (HEIC quality slider, video transcoding H.265)
+- Large file handling (skip over configurable size unless wifi + charging)
+
+### Platform
+- Backblaze B2 (S3-compatible, even cheaper)
+- MinIO / self-hosted S3
+- WebDAV (Nextcloud, Synology NAS)
+- SFTP (any Linux server)
+- Android version (Kotlin, same cloud backends)
