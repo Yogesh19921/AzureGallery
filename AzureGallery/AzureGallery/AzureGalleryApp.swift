@@ -21,6 +21,12 @@ enum AppearanceMode: String, CaseIterable {
 
 // MARK: - App Delegate (needed for background URLSession events)
 class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // BGTaskScheduler MUST be registered before app finishes launching.
+        BackgroundTaskService.register()
+        return true
+    }
+
     func application(
         _ application: UIApplication,
         handleEventsForBackgroundURLSession identifier: String,
@@ -64,7 +70,7 @@ struct AzureGalleryApp: App {
                     await photoLibrary.requestAuthorization()
                     NotificationService.requestPermission()
                     await BackupEngine.shared.start(photoLibrary: photoLibrary)
-                    BackgroundTaskService.register()
+                    // register() already called in AppDelegate.didFinishLaunching
                     BackgroundTaskService.scheduleRefresh()
                 }
         }

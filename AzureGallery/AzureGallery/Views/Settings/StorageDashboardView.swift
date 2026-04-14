@@ -6,7 +6,7 @@ struct StorageDashboardView: View {
     @State private var blobCount: Int = 0
     @State private var totalBytes: Int64 = 0
     @State private var error: String?
-    @AppStorage("storageTier") private var storageTier = ""
+    @AppStorage("storageTier") private var storageTier = "Cold"
 
     var body: some View {
         List {
@@ -59,15 +59,13 @@ struct StorageDashboardView: View {
     private func load() async {
         loading = true
         error = nil
-        guard let cs = KeychainHelper.load(key: KeychainHelper.connectionStringKey),
-              let container = KeychainHelper.load(key: KeychainHelper.containerNameKey),
-              let config = try? AzureConfig.parse(connectionString: cs, containerName: container) else {
-            error = "Azure not configured"
+        guard let provider = CloudStorageFactory.makeProvider() else {
+            error = "Cloud storage not configured"
             loading = false
             return
         }
         do {
-            let stats = try await AzureBlobService(config: config).containerStats()
+            let stats = try await provider.containerStats()
             blobCount = stats.blobCount
             totalBytes = stats.totalBytes
         } catch {
@@ -77,7 +75,7 @@ struct StorageDashboardView: View {
     }
 
     private var effectiveTier: String {
-        storageTier.isEmpty ? "Hot" : storageTier
+        storageTier.isEmpty ? "Cold" : storageTier
     }
 
     // MARK: - Cost calculations (per-GB/month, per-10K ops)

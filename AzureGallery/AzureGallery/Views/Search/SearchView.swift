@@ -86,16 +86,24 @@ struct SearchView: View {
 
         // Semantic search: expand free-text query into matching scene labels via NLEmbedding
         if !query.isEmpty && sceneKw == nil {
-            let expanded = SemanticSearchService.expandQuery(query)
-            // Try each expanded keyword and merge results
             var merged: [String: BackupRecord] = [:]
-            for kw in expanded {
+
+            // 1. Direct keyword match against all searchable columns (raw query)
+            let direct = (try? DatabaseService.shared.searchRecords(
+                hasText: hasText, minFaces: minFaces, sceneKeyword: query
+            )) ?? []
+            for r in direct { merged[r.assetId] = r }
+
+            // 2. Semantic expansion — find related labels via NLEmbedding
+            let expanded = SemanticSearchService.expandQuery(query)
+            for kw in expanded where kw != query.lowercased() {
                 let partial = (try? DatabaseService.shared.searchRecords(
                     hasText: hasText, minFaces: minFaces, sceneKeyword: kw
                 )) ?? []
                 for r in partial { merged[r.assetId] = r }
             }
-            // Also search OCR text directly
+
+            // 3. OCR text search
             let textResults = (try? DatabaseService.shared.searchRecords(
                 hasText: hasText, minFaces: minFaces, textQuery: query
             )) ?? []

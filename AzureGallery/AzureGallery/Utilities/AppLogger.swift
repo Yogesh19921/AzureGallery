@@ -128,14 +128,17 @@ final class AppLogger {
     private func persist(_ entry: LogEntry) {
         let line = entry.formatted + "\n"
         guard let data = line.data(using: .utf8) else { return }
-        if FileManager.default.fileExists(atPath: logFileURL.path) {
-            if let handle = try? FileHandle(forWritingTo: logFileURL) {
-                handle.seekToEndOfFile()
-                handle.write(data)
-                try? handle.close()
+        let url = logFileURL
+        DispatchQueue.global(qos: .utility).async {
+            if FileManager.default.fileExists(atPath: url.path) {
+                if let handle = try? FileHandle(forWritingTo: url) {
+                    handle.seekToEndOfFile()
+                    handle.write(data)
+                    try? handle.close()
+                }
+            } else {
+                try? data.write(to: url, options: .atomic)
             }
-        } else {
-            try? data.write(to: logFileURL, options: .atomic)
         }
     }
 

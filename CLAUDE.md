@@ -6,20 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Build for simulator
-xcodebuild build -scheme AzureGallery -destination 'platform=iOS Simulator,name=iPhone 16'
+xcodebuild build -scheme AzureGallery -destination 'platform=iOS Simulator,name=iPhone 17'
 
 # Build for device
 xcodebuild build -scheme AzureGallery -destination generic/platform=iOS
 
-# Run tests
-xcodebuild test -scheme AzureGallery -destination 'platform=iOS Simulator,name=iPhone 16'
+# Run tests (261 tests)
+xcodebuild test -scheme AzureGallery -destination 'platform=iOS Simulator,name=iPhone 17'
 
 # Run single test class
-xcodebuild test -scheme AzureGallery -destination 'platform=iOS Simulator,name=iPhone 16' -only-testing:AzureGalleryTests/BackupEngineTests
-
-# Lint (SwiftLint)
-swiftlint lint --strict
-swiftlint autocorrect
+xcodebuild test -scheme AzureGallery -destination 'platform=iOS Simulator,name=iPhone 17' -only-testing:AzureGalleryTests/DatabaseServiceTests
 
 # Resolve Swift packages
 xcodebuild -resolvePackageDependencies
@@ -29,58 +25,79 @@ Open `AzureGallery.xcodeproj` in Xcode for development. Minimum deployment targe
 
 ## Architecture
 
-Local-first iOS photo backup app. Gallery reads entirely from local PhotoKit — zero network during daily use. Azure is write-only during normal operation, read-only during restore.
+Local-first iOS photo backup app with multi-cloud support. Gallery reads entirely from local PhotoKit — zero network during daily use. Cloud providers are write-only during normal operation, read-only during restore.
 
 ### Layer Overview
 
 | Layer | Files | Responsibility |
 |---|---|---|
-| App entry | `AzureGalleryApp.swift` | URLSession delegate wiring, app lifecycle |
+| App entry | `AzureGalleryApp.swift` | URLSession delegate wiring, BGTask registration, onboarding |
 | Views | `Views/` | SwiftUI, read from `@Observable` services |
 | Services | `Services/` | All business logic, no UI imports |
-| Models | `Models/` | Value types, GRDB record types |
+| Models | `Models/` | Value types, GRDB record types, cloud configs |
 | Utilities | `Utilities/` | Stateless helpers |
 
 ### Critical: URLSession Background Transfers
 
-The single most important architectural decision. `BackupEngine.swift` creates `URLSession` with `.background` configuration — uploads run in `nsurlsessiond`, a system daemon independent of the app process. The app can be killed mid-upload and iOS continues uploading. Flow:
+`BackupEngine.swift` creates `URLSession` with `.background` configuration — uploads run in `nsurlsessiond`. The app can be killed mid-upload and iOS continues. Flow:
 
 ```
-PHAsset → FileExporter (temp file on disk) → URLSession background task → nsurlsessiond uploads → delegate callback → delete temp file
+PHAsset → FileExporter (temp file) → SHA-256 hash → dedup check → HEAD check → URLSession background task → delegate callback → mirror to secondary providers
 ```
 
 **Never** stream directly from `PHImageManager` to `URLSession`. The temp-file intermediary is required.
 
+### Multi-Cloud Provider Architecture
+
+`CloudStorageProvider` protocol abstracts all cloud operations. Three implementations:
+- `AzureBlobService` — Shared Key (HMAC-SHA256), REST API
+- `S3BlobService` — AWS Signature V4, virtual-hosted URLs
+- `GCPBlobService` — HMAC keys (S3-compatible signing), path-style URLs
+
+`CloudStorageFactory.makeAllEnabled()` returns all configured+enabled providers. Primary provider uses background URLSession. After success, `mirrorToSecondaryProviders()` uploads to additional providers via foreground URLSession.
+
+### Upload Path Optimization
+
+Three-stage cost ladder before any network upload:
+1. **Local hash dedup** (free) — SHA-256 of exported file, check DB for matching uploaded record
+2. **Remote HEAD check** (1 round-trip) — does blob already exist? (handles reinstalls)
+3. **PUT upload** — actual transfer via background URLSession
+
 ### Backup State Machine
 
-`pending` → `uploading` → `uploaded`  
-`uploading` → `failed` (auto-retry ×3 by URLSession) → `perm_failed`
+`pending` → `uploading` → `uploaded`
+`uploading` → `failed` (auto-retry ×3) → `perm_failed`
 
-SQLite (`backups` table) is the single source of truth. The app never queries Azure blobs to determine backup state during normal operation.
+SQLite (`backups` table) is the single source of truth. DB migrations: v1 (core), v2 (vision metadata), v3 (content hash), v4 (bandwidth stats), v5 (search text + animal labels).
 
 ### Key Service Interactions
 
-- `BackupEngine` depends on `PhotoLibraryService`, `AzureBlobService`, `DatabaseService`
-- `BackupEngine` registers as `URLSessionDelegate` — must be the same instance across app launches (background session identifier must be consistent)
-- `PhotoLibraryService` implements `PHPhotoLibraryChangeObserver` → notifies `BackupEngine` of new assets in real time
-- `AzureBlobService` uses raw REST + SAS token (no heavy Azure SDK); SAS token lives in Keychain via `KeychainHelper`
+- `BackupEngine` depends on `CloudStorageProvider`, `PhotoLibraryService`, `DatabaseService`
+- `NetworkMonitor` gates uploads (Wi-Fi only, charge only)
+- `BackgroundTaskService` schedules BGAppRefreshTask every 15 min
+- `NotificationService` fires local notifications + badge count
+- `SemanticSearchService` expands search queries via `NLEmbedding`
+- `VisionService` runs face detection, scene classification, OCR, animal detection
 
 ### Blob Naming
 
-`originals/<year>/<month>/<PHAsset.localIdentifier sanitized>.EXT`  
-Live Photos = 2 blobs: same base name, `.HEIC` + `.MOV`. `ManifestManager` tracks both under one logical asset.
+`originals/<device-id>/<year>/<month>/<PHAsset.localIdentifier sanitized>.EXT`
 
-### iCloud Photo Library Edge Case
+`DeviceIdentifier` generates a stable 8-char ID on first launch. Live Photos = 2 blobs: `.HEIC` + `.MOV`.
 
-Assets may exist as low-res placeholders locally. `FileExporter` must request `.current` delivery mode from `PHImageManager`, which triggers iCloud download transparently. Handle download failure → mark `failed`, retry later.
+### Storage Tier Default
 
-### Multi-Device (V2+)
-
-`PHAsset.localIdentifier` is device-scoped. V1 is single-device. V2 uses `originals/<device-id>/...` prefix or SHA-256 content hash for deduplication.
+Default tier is **Cold** (Azure Cold / S3 GLACIER_IR / GCP COLDLINE). Configurable in Settings.
 
 ## Dependencies
 
-Managed via Swift Package Manager:
+- **GRDB.swift** — SQLite wrapper (type-safe, migration support)
+- **CryptoKit** — HMAC-SHA256 signing for all three cloud providers, SHA-256 content hashing
+- **NaturalLanguage** — NLEmbedding for semantic search query expansion
+- **Vision** — Scene classification, face detection, OCR, animal recognition
+- **BackgroundTasks** — BGAppRefreshTask scheduling
+- **Network** — NWPathMonitor for connectivity state
 
-- **GRDB.swift** — SQLite wrapper (type-safe, migration support). Preferred over SwiftData for this use case.
-- **AzureStorageBlob Swift SDK** — optional; raw REST API is the default for lower overhead.
+## Test Suites (261 tests)
+
+AppLoggerTests, AzureBlobServiceTests, AzureConfigTests, BackgroundTaskServiceTests, BackupEnginePauseTests, BackupRecordTests, BackupSelectionTests, BackupStatsTests, BackupWidgetDataTests, BlobNamingTests, DatabaseServiceTests, DeviceIdentifierTests, GCPBlobServiceTests, KeychainHelperTests, NetworkMonitorTests, NotificationServiceTests, OnboardingTests, S3BlobServiceTests, TabProgressTests

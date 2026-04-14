@@ -10,7 +10,7 @@ struct SettingsView: View {
     @State private var showRetryConfirm = false
     @State private var chargeOnlyEnabled: Bool = UserDefaults.standard.bool(forKey: "chargeOnly")
     @AppStorage("appearanceMode") private var appearanceMode = AppearanceMode.system
-    @AppStorage("storageTier") private var storageTier = ""
+    @AppStorage("storageTier") private var storageTier = "Cold"
     @AppStorage("maxConcurrentUploads") private var maxConcurrentUploads = 10
 
     private var isConfigured: Bool { KeychainHelper.load(key: KeychainHelper.connectionStringKey) != nil }
@@ -18,19 +18,21 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Azure Storage") {
-                    HStack {
-                        Label("Configuration", systemImage: "cloud")
-                        Spacer()
-                        Text(isConfigured ? "Connected" : "Not set up")
-                            .foregroundStyle(isConfigured ? .green : .secondary)
-                            .font(.caption)
-                    }
-                    Button("Configure Azure…") { showAzureSetup = true }
-                    if isConfigured {
-                        NavigationLink("Storage & Cost") {
-                            StorageDashboardView()
+                Section("Cloud Storage") {
+                    NavigationLink {
+                        CloudProvidersView()
+                    } label: {
+                        HStack {
+                            Label("Providers", systemImage: "cloud")
+                            Spacer()
+                            let count = CloudProviderType.allCases.filter { $0.isConfigured && $0.isEnabled }.count
+                            Text(count > 0 ? "\(count) active" : "Not set up")
+                                .foregroundStyle(count > 0 ? .green : .secondary)
+                                .font(.caption)
                         }
+                    }
+                    NavigationLink("Storage & Cost") {
+                        StorageDashboardView()
                     }
                 }
 
@@ -77,6 +79,26 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                }
+
+                Section {
+                    let progress = BackupEngine.analysisProgress
+                    if progress.isRunning {
+                        HStack {
+                            ProgressView().controlSize(.small)
+                            Text("Analyzing \(progress.completed)/\(progress.total)…")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Button("Re-analyze Library for Search") {
+                            Task { await BackupEngine.shared.reanalyzeExisting() }
+                        }
+                    }
+                } header: {
+                    Text("Search & AI")
+                } footer: {
+                    Text("Runs Vision AI on existing photos to enable search by content (animals, text, scenes). Only needed once.")
                 }
 
                 Section("Diagnostics") {

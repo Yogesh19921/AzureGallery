@@ -122,7 +122,11 @@ private struct ZoomableImageView: View {
 
             if isPlayingVideo, let player {
                 VideoPlayer(player: player)
-                    .onDisappear { player.pause() }
+                    .onDisappear {
+                        player.pause()
+                        self.player = nil
+                        self.isPlayingVideo = false
+                    }
             } else if let image {
                 Image(uiImage: image)
                     .resizable()
@@ -400,16 +404,13 @@ private struct MetadataSheet: View {
         downloadResult = nil
         defer { downloading = false }
 
-        guard let cs = KeychainHelper.load(key: KeychainHelper.connectionStringKey),
-              let container = KeychainHelper.load(key: KeychainHelper.containerNameKey),
-              let config = try? AzureConfig.parse(connectionString: cs, containerName: container) else {
-            downloadResult = .error("Azure not configured")
+        guard let provider = CloudStorageFactory.makeProvider() else {
+            downloadResult = .error("Cloud storage not configured")
             return
         }
 
-        let blob = AzureBlobService(config: config)
         do {
-            let data = try await blob.downloadBlob(blobName: record.blobName)
+            let data = try await provider.downloadBlob(blobName: record.blobName)
             try await saveToPhotos(data: data, mediaType: record.mediaType)
             downloadResult = .success
         } catch {

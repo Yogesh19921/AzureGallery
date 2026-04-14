@@ -34,4 +34,8 @@ final class NetworkMonitor {
         }
         monitor.start(queue: queue)
     }
+
+    deinit {
+        monitor.cancel()
+    }
 }

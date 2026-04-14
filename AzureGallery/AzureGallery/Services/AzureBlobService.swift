@@ -8,10 +8,11 @@ import CryptoKit
 /// computing HMAC-SHA256 with the decoded account key.
 ///
 /// Reference: https://learn.microsoft.com/en-us/rest/api/storageservices/authorize-with-shared-key
-struct AzureBlobService {
+struct AzureBlobService: CloudStorageProvider {
     private static let apiVersion = "2024-11-04"
 
     let config: AzureConfig
+    var providerName: String { "Azure" }
 
     // MARK: - Public API
 
@@ -61,8 +62,12 @@ struct AzureBlobService {
         var count = 0
         var bytes: Int64 = 0
         var marker: String? = nil
+        var pages = 0
+        let maxPages = 500  // safety: at 5000 blobs/page = 2.5M blobs max
 
         repeat {
+            pages += 1
+            guard pages <= maxPages else { break }
             var components = URLComponents(url: config.containerURL(), resolvingAgainstBaseURL: false)!
             var queryItems = [
                 URLQueryItem(name: "restype", value: "container"),
@@ -80,7 +85,7 @@ struct AzureBlobService {
             let parser = BlobStatsParser()
             let xml = XMLParser(data: data)
             xml.delegate = parser
-            xml.parse()
+            guard xml.parse(), xml.parserError == nil else { break }
             count += parser.blobCount
             bytes += parser.totalBytes
             marker = parser.nextMarker
@@ -120,6 +125,9 @@ struct AzureBlobService {
         }
         return try parseListResponse(data)
     }
+
+    /// Protocol conformance — delegates to `validateConnection()`.
+    func validate() async throws { try await validateConnection() }
 
     /// Validate connection by checking that the container exists.
     func validateConnection() async throws {

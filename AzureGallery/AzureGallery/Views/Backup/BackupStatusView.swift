@@ -1,4 +1,5 @@
 import SwiftUI
+import Photos
 
 struct BackupStatusView: View {
     @Environment(PhotoLibraryService.self) private var photoLibrary
@@ -123,13 +124,28 @@ struct ActiveUploadsView: View {
 
 private struct UploadProgressRow: View {
     let item: ActiveUploadItem
+    @State private var thumbnail: UIImage?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(item.fileName)
-                .font(.subheadline)
-                .lineLimit(1)
-                .truncationMode(.middle)
+        HStack(spacing: 10) {
+            // Thumbnail
+            Group {
+                if let img = thumbnail {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Rectangle().fill(Color(.systemGray5))
+                }
+            }
+            .frame(width: 48, height: 48)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.fileName)
+                    .font(.subheadline)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
 
             if let iCloudProgress = item.iCloudProgress {
                 // iCloud download in progress — show a secondary progress bar
@@ -167,8 +183,26 @@ private struct UploadProgressRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
-        }
+            } // VStack
+        } // HStack
         .padding(.vertical, 4)
+        .task(id: item.id) { loadThumbnail() }
+    }
+
+    private func loadThumbnail() {
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: [item.id], options: nil)
+        guard let asset = assets.firstObject else { return }
+        let opts = PHImageRequestOptions()
+        opts.deliveryMode = .fastFormat
+        opts.isNetworkAccessAllowed = false
+        PHImageManager.default().requestImage(
+            for: asset,
+            targetSize: CGSize(width: 96, height: 96),
+            contentMode: .aspectFill,
+            options: opts
+        ) { img, _ in
+            if let img { DispatchQueue.main.async { thumbnail = img } }
+        }
     }
 
     private func formatted(_ bytes: Int64) -> String {

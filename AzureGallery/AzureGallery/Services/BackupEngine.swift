@@ -14,7 +14,7 @@ private let maxRetries = 3
 /// Live progress snapshot for a single in-flight upload.
 struct ActiveUploadItem: Identifiable {
     let id: String          // assetId — unique per asset
-    let fileName: String    // last path component of blobName shown in the UI
+    let fileName: String    // original filename from PHAssetResource (e.g. "IMG_0042.HEIC")
     var bytesSent: Int64 = 0
     var totalBytes: Int64 = 0
     var progress: Double { totalBytes > 0 ? Double(bytesSent) / Double(totalBytes) : 0 }
@@ -42,6 +42,7 @@ final class BackupEngine: NSObject {
 
     private(set) var isRunning = false
     private(set) var isPaused = false
+    private var isProcessing = false
     private(set) var activeUploads: Int = 0
     /// Live per-file progress, keyed by assetId. Populated when a task starts, removed on completion.
     private(set) var activeUploadItems: [String: ActiveUploadItem] = [:]
@@ -90,6 +91,54 @@ final class BackupEngine: NSObject {
         Task {
             await MainActor.run { AppLogger.shared.info("Backup resumed", tag: "BackupEngine") }
             await processQueue()
+        }
+    }
+
+    // MARK: - Vision Re-analysis
+
+    /// Re-runs Vision analysis on existing records that are missing animalLabels/recognizedText.
+    /// Called from Settings when user taps "Re-analyze Library".
+    @Observable
+    class AnalysisProgress {
+        var total = 0
+        var completed = 0
+        var isRunning = false
+    }
+
+    static let analysisProgress = AnalysisProgress()
+
+    func reanalyzeExisting() async {
+        let progress = Self.analysisProgress
+        guard !progress.isRunning else { return }
+        await MainActor.run { progress.isRunning = true; progress.completed = 0 }
+
+        while true {
+            let batch = (try? db.assetIdsNeedingAnalysis(limit: 20)) ?? []
+            if batch.isEmpty { break }
+            await MainActor.run { progress.total = max(progress.total, progress.completed + batch.count) }
+
+            for assetId in batch {
+                let assets = PHAsset.fetchAssets(withLocalIdentifiers: [assetId], options: nil)
+                guard let asset = assets.firstObject else {
+                    await MainActor.run { progress.completed += 1 }
+                    continue
+                }
+                let analysis = await VisionService.shared.analyze(asset: asset)
+                try? db.updateVisionMetadata(
+                    assetId: assetId,
+                    faceCount: analysis.faceCount > 0 ? analysis.faceCount : nil,
+                    sceneLabels: analysis.sceneLabels.map(\.label),
+                    hasText: !analysis.recognizedText.isEmpty,
+                    recognizedText: analysis.recognizedText,
+                    animalLabels: analysis.animalLabels
+                )
+                await MainActor.run { progress.completed += 1 }
+            }
+        }
+
+        await MainActor.run {
+            progress.isRunning = false
+            AppLogger.shared.info("Re-analysis complete: \(progress.completed) photos", tag: "BackupEngine")
         }
     }
 
@@ -200,7 +249,9 @@ final class BackupEngine: NSObject {
     // MARK: - Processing
 
     func processQueue() async {
-        guard !isPaused else { return }
+        guard !isPaused, !isProcessing else { return }
+        isProcessing = true
+        defer { isProcessing = false }
 
         let wifiOnly = UserDefaults.standard.bool(forKey: "wifiOnly")
         let chargeOnly = UserDefaults.standard.bool(forKey: "chargeOnly")
@@ -225,13 +276,7 @@ final class BackupEngine: NSObject {
             return
         }
 
-        guard let config = loadConfig() else {
-            await MainActor.run {
-                AppLogger.shared.warn("Azure not configured — upload skipped", tag: "BackupEngine")
-            }
-            return
-        }
-        let blobService = AzureBlobService(config: config)
+        guard let provider = loadProvider() else { return }
 
         let pending: [BackupRecord]
         do {
@@ -249,11 +294,11 @@ final class BackupEngine: NSObject {
 
         for record in pending {
             guard activeUploads < maxConcurrentUploads else { break }
-            await uploadRecord(record, blobService: blobService)
+            await uploadRecord(record, provider: provider)
         }
     }
 
-    private func uploadRecord(_ record: BackupRecord, blobService: AzureBlobService) async {
+    private func uploadRecord(_ record: BackupRecord, provider: CloudStorageProvider) async {
         let shortId = String(record.assetId.prefix(8))
         let blobShort = URL(string: record.blobName)?.lastPathComponent ?? record.blobName
 
@@ -283,10 +328,11 @@ final class BackupEngine: NSObject {
 
         // Pre-create the active upload item so iCloud progress can be shown before the
         // background upload starts. It will be updated with file size after export.
-        let fileName = URL(string: record.blobName)?.lastPathComponent ?? record.blobName
+        let originalName = PHAssetResource.assetResources(for: asset).first?.originalFilename
+            ?? URL(string: record.blobName)?.lastPathComponent ?? record.blobName
         await MainActor.run {
             activeUploadItems[record.assetId] = ActiveUploadItem(
-                id: record.assetId, fileName: fileName
+                id: record.assetId, fileName: originalName
             )
         }
 
@@ -297,6 +343,11 @@ final class BackupEngine: NSObject {
                     self?.activeUploadItems[assetId]?.iCloudProgress = progress
                 }
             }
+            // Ensure temp file is cleaned up on all paths except the one that hands it to URLSession.
+            // The background URLSession task owns the file once task.resume() is called.
+            var tempFileHandedOff = false
+            defer { if !tempFileHandedOff { try? FileManager.default.removeItem(at: tempURL) } }
+
             let fileSize = (try? FileManager.default.attributesOfItem(atPath: tempURL.path)[.size] as? Int64) ?? 0
             let contentType = contentType(for: asset)
             await MainActor.run {
@@ -311,7 +362,6 @@ final class BackupEngine: NSObject {
                    existing.status == .uploaded {
                     // Duplicate — skip upload, mark as uploaded
                     try? db.updateStatus(assetId: record.assetId, status: .uploaded)
-                    try? FileManager.default.removeItem(at: tempURL)
                     await MainActor.run {
                         activeUploadItems.removeValue(forKey: record.assetId)
                         AppLogger.shared.info("[\(shortId)] Duplicate of \(String(existing.assetId.prefix(8))) — skipped upload", tag: "BackupEngine")
@@ -322,9 +372,8 @@ final class BackupEngine: NSObject {
             }
 
             // Conflict resolution: skip if blob already exists in Azure (e.g. reinstall)
-            if (try? await blobService.blobExists(blobName: record.blobName)) == true {
+            if (try? await provider.blobExists(blobName: record.blobName)) == true {
                 try? db.updateStatus(assetId: record.assetId, status: .uploaded)
-                try? FileManager.default.removeItem(at: tempURL)
                 await MainActor.run {
                     activeUploadItems.removeValue(forKey: record.assetId)
                     AppLogger.shared.info("[\(shortId)] Blob exists in Azure — skipped re-upload", tag: "BackupEngine")
@@ -340,12 +389,12 @@ final class BackupEngine: NSObject {
                 analysis: analysis,
                 fileSize: fileSize
             )
-            let tier = UserDefaults.standard.string(forKey: "storageTier")
-            let uploadRequest = try blobService.uploadRequest(
+            let tier = UserDefaults.standard.string(forKey: "storageTier").flatMap { $0.isEmpty ? "Cold" : $0 } ?? "Cold"
+            let uploadRequest = try provider.uploadRequest(
                 blobName: record.blobName,
                 contentType: contentType,
                 fileSize: fileSize,
-                accessTier: tier?.isEmpty == false ? tier : nil
+                accessTier: tier
             )
             await MainActor.run {
                 let urlStr = uploadRequest.url?.absoluteString ?? "?"
@@ -353,6 +402,7 @@ final class BackupEngine: NSObject {
             }
 
             let task = session.uploadTask(with: uploadRequest, fromFile: tempURL)
+            tempFileHandedOff = true  // URLSession now owns the file
             var map = taskMap
             map[String(task.taskIdentifier)] = record.assetId
             taskMap = map
@@ -399,16 +449,63 @@ final class BackupEngine: NSObject {
 
     // MARK: - Helpers
 
-    private func loadConfig() -> AzureConfig? {
-        guard let cs = KeychainHelper.load(key: KeychainHelper.connectionStringKey),
-              let container = KeychainHelper.load(key: KeychainHelper.containerNameKey) else { return nil }
-        do {
-            return try AzureConfig.parse(connectionString: cs, containerName: container)
-        } catch {
+    private func loadProvider() -> CloudStorageProvider? {
+        guard let provider = CloudStorageFactory.makeProvider() else {
             DispatchQueue.main.async {
-                AppLogger.shared.error("Azure config parse failed: \(error.localizedDescription)", tag: "BackupEngine")
+                AppLogger.shared.warn("Cloud provider not configured", tag: "BackupEngine")
             }
             return nil
+        }
+        return provider
+    }
+
+    /// After primary upload succeeds, mirror the blob to additional enabled providers.
+    private func mirrorToSecondaryProviders(record: BackupRecord, primaryName: String) {
+        let allProviders = CloudStorageFactory.makeAllEnabled()
+        let mirrors = allProviders.filter { $0.providerName != primaryName }
+        guard !mirrors.isEmpty else { return }
+
+        Task.detached(priority: .utility) {
+            let shortId = String(record.assetId.prefix(8))
+            for mirror in mirrors {
+                // Check if blob already exists on this provider
+                if (try? await mirror.blobExists(blobName: record.blobName)) == true {
+                    await MainActor.run {
+                        AppLogger.shared.info("[\(shortId)] Mirror skip — exists on \(mirror.providerName)", tag: "BackupEngine")
+                    }
+                    continue
+                }
+                // Download from primary and re-upload to mirror
+                guard let primary = CloudStorageFactory.makeAllEnabled().first(where: { $0.providerName == primaryName }) else { continue }
+                do {
+                    let data = try await primary.downloadBlob(blobName: record.blobName)
+                    let tempURL = FileManager.default.temporaryDirectory
+                        .appendingPathComponent(UUID().uuidString)
+                    try data.write(to: tempURL)
+                    defer { try? FileManager.default.removeItem(at: tempURL) }
+                    let fileSize = Int64(data.count)
+                    let tier = UserDefaults.standard.string(forKey: "storageTier").flatMap { $0.isEmpty ? "Cold" : $0 } ?? "Cold"
+                    let request = try mirror.uploadRequest(
+                        blobName: record.blobName,
+                        contentType: record.mediaType == "video" ? "video/quicktime" : "image/heic",
+                        fileSize: fileSize,
+                        accessTier: tier
+                    )
+                    let (_, response) = try await URLSession.shared.upload(for: request, fromFile: tempURL)
+                    let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    await MainActor.run {
+                        if code == 200 || code == 201 {
+                            AppLogger.shared.info("[\(shortId)] Mirrored to \(mirror.providerName) (HTTP \(code))", tag: "BackupEngine")
+                        } else {
+                            AppLogger.shared.warn("[\(shortId)] Mirror to \(mirror.providerName) failed: HTTP \(code)", tag: "BackupEngine")
+                        }
+                    }
+                } catch {
+                    await MainActor.run {
+                        AppLogger.shared.warn("[\(shortId)] Mirror to \(mirror.providerName) failed: \(error.localizedDescription)", tag: "BackupEngine")
+                    }
+                }
+            }
         }
     }
 
@@ -461,15 +558,13 @@ extension BackupEngine: URLSessionDelegate, URLSessionTaskDelegate {
             if totalBytes > 0 {
                 try? db.recordUpload(bytes: totalBytes, date: Date())
             }
-            batchUploadedCount += 1
             DispatchQueue.main.async {
+                self.batchUploadedCount += 1
                 AppLogger.shared.info("[\(shortId)] Upload succeeded (HTTP \(statusCode))", tag: "BackupEngine")
             }
             try? db.updateStatus(assetId: assetId, status: .uploaded)
             DispatchQueue.main.async { BackupBadge.invalidate() }
-            if let fileURL = (task as? URLSessionUploadTask).flatMap({ _ in nil as URL? }) {
-                try? FileManager.default.removeItem(at: fileURL)
-            }
+            // Background URLSession temp files are cleaned up by the OS after delegate callback.
 
             // Keep widget data fresh after each successful upload
             BackupWidgetData.current().save()
@@ -477,6 +572,12 @@ extension BackupEngine: URLSessionDelegate, URLSessionTaskDelegate {
             // Update badge count with remaining pending uploads
             let pending = (try? db.pendingCount()) ?? 0
             NotificationService.updateBadge(count: pending)
+
+            // Mirror to secondary providers (if any configured)
+            if let record = try? db.record(for: assetId) {
+                let primaryName = CloudStorageFactory.makeProvider()?.providerName ?? "Azure"
+                mirrorToSecondaryProviders(record: record, primaryName: primaryName)
+            }
         } else {
             DispatchQueue.main.async {
                 let headers = (task.response as? HTTPURLResponse)?.allHeaderFields

@@ -59,6 +59,19 @@ enum KeychainHelper {
 
 /// Keychain key constants used throughout the app.
 extension KeychainHelper {
+    // Azure
     static let connectionStringKey = "azureConnectionString"
     static let containerNameKey = "azureContainerName"
+
+    // Amazon S3
+    static let s3AccessKeyIdKey = "s3.accessKeyId"
+    static let s3SecretAccessKeyKey = "s3.secretAccessKey"
+    static let s3BucketKey = "s3.bucket"
+    static let s3RegionKey = "s3.region"
+
+    // Google Cloud Storage
+    static let gcpAccessKeyKey = "gcp.accessKey"
+    static let gcpSecretKey = "gcp.secret"
+    static let gcpBucketKey = "gcp.bucket"
+    static let gcpProjectIdKey = "gcp.projectId"
 }

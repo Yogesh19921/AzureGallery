@@ -106,6 +106,13 @@ final class DatabaseService {
         }
     }
 
+    /// Returns asset IDs of records that have NULL animalLabels (need Vision re-analysis).
+    func assetIdsNeedingAnalysis(limit: Int = 100) throws -> [String] {
+        try dbQueue.read { db in
+            try String.fetchAll(db, sql: "SELECT assetId FROM backups WHERE animalLabels IS NULL LIMIT ?", arguments: [limit])
+        }
+    }
+
     /// Search backed-up records using Vision metadata. Searches scene labels, OCR text, and animal labels.
     func searchRecords(hasText: Bool? = nil, minFaces: Int? = nil, sceneKeyword: String? = nil,
                        textQuery: String? = nil, limit: Int = 200) throws -> [BackupRecord] {

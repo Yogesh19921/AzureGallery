@@ -168,23 +168,25 @@ private struct RestoreThumbnail: View {
     }
 
     private func loadThumbnail() async {
-        guard let cs = KeychainHelper.load(key: KeychainHelper.connectionStringKey),
-              let container = KeychainHelper.load(key: KeychainHelper.containerNameKey),
-              let config = try? AzureConfig.parse(connectionString: cs, containerName: container) else { return }
-        let blob = AzureBlobService(config: config)
-        guard let data = try? await blob.downloadBlobRange(blobName: record.blobName, offset: 0, length: 65536),
+        guard let provider = CloudStorageFactory.makeProvider(),
+              let data = try? await provider.downloadBlobRange(blobName: record.blobName, offset: 0, length: 65536),
               let img = UIImage(data: data) else { return }
         thumbnail = img
     }
 
+    @State private var error: String?
+
     private func download() async {
         downloading = true
+        error = nil
         defer { downloading = false }
         do {
             let data = try await downloadBlob(blobName: record.blobName)
             try await saveToPhotos(data: data, mediaType: record.mediaType)
             done = true
-        } catch {}
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 }
 
@@ -239,12 +241,10 @@ private struct DownloadMonthButton: View {
 // MARK: - Shared download helpers
 
 private func downloadBlob(blobName: String) async throws -> Data {
-    guard let cs = KeychainHelper.load(key: KeychainHelper.connectionStringKey),
-          let container = KeychainHelper.load(key: KeychainHelper.containerNameKey),
-          let config = try? AzureConfig.parse(connectionString: cs, containerName: container) else {
+    guard let provider = CloudStorageFactory.makeProvider() else {
         throw RestoreError.notConfigured
     }
-    return try await AzureBlobService(config: config).downloadBlob(blobName: blobName)
+    return try await provider.downloadBlob(blobName: blobName)
 }
 
 private func saveToPhotos(data: Data, mediaType: String) async throws {
@@ -265,5 +265,5 @@ private func saveToPhotos(data: Data, mediaType: String) async throws {
 
 private enum RestoreError: LocalizedError {
     case notConfigured
-    var errorDescription: String? { "Azure not configured" }
+    var errorDescription: String? { "Cloud storage not configured" }
 }

@@ -468,30 +468,76 @@ Apple requires a clear privacy policy and purpose string for photo library acces
 
 ## Development Roadmap
 
-### V1 — Core (MVP)
-- [ ] Photo library permissions + grid gallery
-- [ ] Full-screen photo viewer with zoom
-- [ ] Azure SAS token configuration + connection test
-- [ ] Scan library → detect new photos → queue uploads
-- [ ] URLSession background uploads to Azure Cold tier
-- [ ] SQLite tracking (pending/uploading/uploaded/failed)
-- [ ] Backup status dashboard (counts, last upload time)
-- [ ] Basic restore (scan Azure → download all → save to library)
-- [ ] Settings: wifi-only toggle, auto-backup toggle
+### V1 — Core (MVP) -- DONE
+- [x] Photo library permissions + grid gallery
+- [x] Full-screen photo viewer with zoom
+- [x] Azure Shared Key configuration + connection test
+- [x] Scan library → detect new photos → queue uploads
+- [x] URLSession background uploads to Azure Cold tier
+- [x] SQLite tracking (pending/uploading/uploaded/failed)
+- [x] Backup status dashboard (counts, last upload time)
+- [x] Basic restore (scan Azure → download all → save to library)
+- [x] Settings: wifi-only toggle, auto-backup toggle
+- [x] Light/dark mode support
 
-### V2 — Polish
-- [ ] Backup status badge on each photo in grid
-- [ ] Video playback + Live Photo support
-- [ ] Selective restore (by date range)
-- [ ] Cost estimate calculator
-- [ ] Failed uploads list with manual retry
-- [ ] Manifest.json generation + upload
-- [ ] Push notifications (backup complete, failures)
+### V2 — Polish -- DONE
+- [x] Backup status cloud badge on each photo in grid
+- [x] Video playback with AVPlayer (inline + full-screen)
+- [x] Selective restore by month with thumbnail previews (Azure Range GET)
+- [x] Cost estimate calculator with per-tier Azure pricing
+- [x] Storage usage dashboard (blob count + total size from Azure API)
+- [x] Failed uploads list with manual retry
+- [x] Manifest.json generation + upload
+- [x] Push notifications (batch complete, app icon badge count)
+- [x] In-app diagnostic logs with 24-hour expiry, share button, shake-to-share
+- [x] Active uploads view with per-file progress bars, thumbnails, real filenames
+- [x] Pause/resume backup
+- [x] Configurable concurrent uploads (1–20, default 10)
+- [x] Charge-only upload mode
 
-### V3 — Advanced
-- [ ] Multi-device support (device-prefixed blob paths)
-- [ ] Content-hash deduplication across devices
-- [ ] Widget showing backup status on home screen
-- [ ] Siri Shortcuts integration ("Back up my photos")
-- [ ] iPad support with multi-column gallery
-- [ ] watchOS complication showing backup status
+### V3 — Advanced -- DONE
+- [x] Multi-device support (device-prefixed blob paths via stable DeviceIdentifier)
+- [x] SHA-256 content-hash deduplication (streaming 1MB chunks, cross-device)
+- [x] Conflict resolution (HEAD check before upload — skip if blob exists)
+- [x] Widget-ready backup status card (BackupWidgetData Codable for future WidgetKit)
+- [x] 3-screen onboarding flow (Welcome → Photo Access → Azure Setup)
+- [x] Background App Refresh (BGTaskScheduler, 15-min interval)
+- [x] iCloud download progress indicator (cyan bar + percentage)
+- [x] Bandwidth stats (bytes uploaded today/this month)
+- [x] Storage tier picker (Hot/Cool/Cold/Archive, default Cold)
+- [x] Multi-cloud support: Azure + Amazon S3 + Google Cloud Storage
+- [x] Multi-provider mirroring (upload to all enabled providers)
+- [x] ML-powered search via NLEmbedding (semantic query expansion)
+- [x] Vision metadata search (scene labels, OCR text, face count, animals)
+- [x] Tab bar upload progress indicator (circular Core Graphics)
+- [x] Album-based backup selection (back up specific albums only)
+
+### V4 — Future
+- [ ] **Security**: App lock (Face ID / passcode gate on launch)
+- [ ] **Security**: Client-side encryption (AES-256-GCM before upload, user passphrase-derived key)
+- [ ] **Security**: Secure wipe (delete local photos after confirmed upload, with undo window)
+- [ ] **Reliability**: Exponential backoff retry (instead of flat 3 retries)
+- [ ] **Reliability**: Post-upload integrity check (HEAD blob, compare Content-MD5 with local hash)
+- [ ] **Search**: Full-text search on OCR results (currently stored but not indexed)
+- [ ] **Search**: Date range filter in search view
+- [ ] **Search**: Location-based search (GPS → reverse geocode → searchable place names)
+- [ ] **Search**: Similar photo detection (VNFeaturePrint perceptual hash clustering)
+- [ ] **Sync**: Full device restore (bulk download all blobs back to device)
+- [ ] **Sync**: Selective sync (keep only thumbnails locally, full-res in cloud, download on demand)
+- [ ] **Sync**: Manifest sync (upload manifest periodically so other devices can discover backups)
+- [ ] **Sync**: Sync deletions (optional: remove cloud blob when local photo is deleted)
+- [ ] **UX**: Photo editing (crop/rotate/filters before or after backup)
+- [ ] **UX**: Shared albums (generate SAS URL / presigned URL with expiry for sharing)
+- [ ] **UX**: Favorites sync (star locally → tag blob metadata in cloud)
+- [ ] **UX**: WidgetKit home screen widget (backup progress, last backup time)
+- [ ] **UX**: Siri Shortcuts ("Back up my photos" voice command)
+- [ ] **UX**: iPad support with multi-column gallery
+- [ ] **UX**: watchOS complication showing backup status
+- [ ] **Cost**: Auto-cleanup old blobs (configurable retention policy)
+- [ ] **Cost**: Compression before upload (HEIC quality slider, video transcoding to H.265)
+- [ ] **Cost**: Large file handling (skip files over configurable size unless on wifi + charging)
+- [ ] **Platform**: Backblaze B2 provider (S3-compatible API, even cheaper storage)
+- [ ] **Platform**: MinIO / self-hosted S3 provider
+- [ ] **Platform**: WebDAV provider (Nextcloud, Synology NAS)
+- [ ] **Platform**: SFTP provider (any Linux server)
+- [ ] **Platform**: Android version (Kotlin, same cloud backends)
