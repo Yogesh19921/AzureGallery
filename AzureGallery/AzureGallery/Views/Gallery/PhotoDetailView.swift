@@ -134,7 +134,8 @@ private struct ZoomableImageView: View {
                     .scaleEffect(scale)
                     .offset(offset)
                     .gesture(magnifyGesture())
-                    .gesture(panGesture())
+                    // Pan only when zoomed — at 1x, TabView handles left/right swipes
+                    .highPriorityGesture(scale > 1 ? panGesture() : nil)
                     .onTapGesture(count: 2) {
                         withAnimation(.spring()) {
                             scale = scale > 1 ? 1 : 2
