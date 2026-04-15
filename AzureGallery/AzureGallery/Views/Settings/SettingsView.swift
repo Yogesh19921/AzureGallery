@@ -21,26 +21,44 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Cloud Storage") {
+                // ── Account ──
+                Section("Account") {
                     NavigationLink {
                         CloudProvidersView()
                     } label: {
                         HStack {
-                            Label("Providers", systemImage: "cloud")
+                            Label("Cloud Providers", systemImage: "cloud")
                             Spacer()
                             Text(activeProviderCount > 0 ? "\(activeProviderCount) active" : "Not set up")
                                 .foregroundStyle(activeProviderCount > 0 ? .green : .secondary)
                                 .font(.caption)
                         }
                     }
-                    NavigationLink("Storage & Cost") {
+                    NavigationLink {
                         StorageDashboardView()
+                    } label: {
+                        Label("Storage & Cost", systemImage: "chart.bar")
+                    }
+                    Picker("Storage Tier", selection: $storageTier) {
+                        Text("Account Default").tag("")
+                        Text("Hot").tag("Hot")
+                        Text("Cool").tag("Cool")
+                        Text("Cold").tag("Cold")
+                        Text("Archive").tag("Archive")
+                    }
+                    if storageTier == "Archive" {
+                        Label("Archive files cannot be immediately downloaded.",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.orange)
                     }
                 }
 
+                // ── Backup ──
                 Section("Backup") {
-                    NavigationLink("Backup Sources") {
+                    NavigationLink {
                         BackupSourcesView()
+                    } label: {
+                        Label("Backup Sources", systemImage: "photo.on.rectangle.angled")
                     }
                     Toggle("Auto Backup", isOn: $autoBackupEnabled)
                         .onChange(of: autoBackupEnabled) {
@@ -55,33 +73,11 @@ struct SettingsView: View {
                             UserDefaults.standard.set(chargeOnlyEnabled, forKey: "chargeOnly")
                         }
                     Stepper("Concurrent Uploads: \(maxConcurrentUploads)", value: $maxConcurrentUploads, in: 1...20)
+                    Button("Retry Failed Uploads") { showRetryConfirm = true }
+                        .foregroundStyle(.orange)
                 }
 
-                Section("Storage") {
-                    Picker("Access Tier", selection: $storageTier) {
-                        Text("Account Default").tag("")
-                        Text("Hot").tag("Hot")
-                        Text("Cool").tag("Cool")
-                        Text("Cold").tag("Cold")
-                        Text("Archive").tag("Archive")
-                    }
-                    if storageTier == "Archive" {
-                        Label("Archive files cannot be immediately downloaded. Rehydration may take hours.",
-                              systemImage: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
-                }
-
-                Section("Appearance") {
-                    Picker("Theme", selection: $appearanceMode) {
-                        ForEach(AppearanceMode.allCases, id: \.self) { mode in
-                            Text(mode.rawValue).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                }
-
+                // ── Search ──
                 Section {
                     if isAnalyzing {
                         HStack {
@@ -101,18 +97,27 @@ struct SettingsView: View {
                 } header: {
                     Text("Search")
                 } footer: {
-                    Text("Runs Vision AI on your photos to enable search by content (animals, text, scenes). Runs on-device.")
+                    Text("Runs Vision AI on your photos to enable search by content. On-device only.")
                 }
 
-                Section("Diagnostics") {
-                    NavigationLink("Logs") {
-                        LogsView()
+                // ── App ──
+                Section("App") {
+                    Picker("Theme", selection: $appearanceMode) {
+                        ForEach(AppearanceMode.allCases, id: \.self) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
                     }
-                }
-
-                Section {
-                    Button("Retry Failed Uploads") { showRetryConfirm = true }
-                        .foregroundStyle(.orange)
+                    .pickerStyle(.segmented)
+                    NavigationLink {
+                        LogsView()
+                    } label: {
+                        Label("Diagnostics", systemImage: "doc.text")
+                    }
+                    NavigationLink {
+                        AboutView()
+                    } label: {
+                        Label("About", systemImage: "info.circle")
+                    }
                 }
             }
             .navigationTitle("Settings")
@@ -141,5 +146,50 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - About
+
+private struct AboutView: View {
+    var body: some View {
+        List {
+            Section {
+                HStack {
+                    Image(systemName: "cloud.fill")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("AzureGallery")
+                            .font(.title2.weight(.bold))
+                        Text("Your photos, your cloud")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section("Info") {
+                LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
+                LabeledContent("Build", value: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1")
+                LabeledContent("iOS", value: UIDevice.current.systemVersion)
+            }
+
+            Section("Stats") {
+                let stats = (try? DatabaseService.shared.stats(totalInLibrary: 0)) ?? .empty
+                LabeledContent("Photos Backed Up", value: "\(stats.uploaded)")
+                LabeledContent("Pending", value: "\(stats.pendingTotal)")
+                LabeledContent("Failed", value: "\(stats.allFailed)")
+            }
+
+            Section {
+                Link(destination: URL(string: "https://github.com/Yogesh19921/AzureGallery")!) {
+                    Label("GitHub", systemImage: "link")
+                }
+            }
+        }
+        .navigationTitle("About")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

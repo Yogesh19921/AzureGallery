@@ -1,5 +1,6 @@
 import SwiftUI
 import Photos
+import Combine
 
 // Identifiable wrapper so we can use fullScreenCover(item:)
 private struct PhotoSelection: Identifiable {
@@ -9,6 +10,9 @@ private struct PhotoSelection: Identifiable {
 struct GalleryView: View {
     @Environment(PhotoLibraryService.self) private var photoLibrary
     @State private var selectedPhoto: PhotoSelection?
+    @State private var activeUploads = 0
+    @State private var pendingCount = 0
+    @State private var visibleMonth = ""
 
     private let columns = [GridItem(.adaptive(minimum: 110), spacing: 2)]
 
@@ -43,26 +47,133 @@ struct GalleryView: View {
                 }
             }
             .navigationTitle("Gallery")
+            .toolbarTitleDisplayMode(.inlineLarge)
             .fullScreenCover(item: $selectedPhoto) { selection in
                 PhotoDetailView(fetchResult: photoLibrary.assets, currentIndex: selection.id)
+            }
+            .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
+                activeUploads = BackupEngine.shared.activeUploads
+                pendingCount = (try? DatabaseService.shared.pendingCount()) ?? 0
             }
         }
     }
 
     private var photoGrid: some View {
-        ScrollView {
-            LazyVGrid(columns: columns, spacing: 2) {
-                ForEach(0..<photoLibrary.assets.count, id: \.self) { index in
-                    ThumbnailCell(asset: photoLibrary.assets.object(at: index))
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            selectedPhoto = PhotoSelection(id: index)
+        ZStack(alignment: .topLeading) {
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Backup progress banner
+                    if activeUploads > 0 || pendingCount > 0 {
+                        HStack(spacing: 8) {
+                            if activeUploads > 0 {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Image(systemName: "cloud.fill").foregroundStyle(.blue)
+                            }
+                            Text(activeUploads > 0
+                                 ? "Backing up… \(pendingCount) remaining"
+                                 : "\(pendingCount) pending")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
                         }
+                        .padding(.horizontal)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial)
+                    }
+
+                    // Photo grid grouped by month
+                    let sections = buildSections()
+                    ForEach(sections, id: \.title) { section in
+                        // Month header — inline
+                        HStack {
+                            Text(section.title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("\(section.indices.count)")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal)
+                        .padding(.top, 20)
+                        .padding(.bottom, 8)
+
+                        // Photos in this month
+                        LazyVGrid(columns: columns, spacing: 2) {
+                            ForEach(section.indices, id: \.self) { index in
+                                ThumbnailCell(asset: photoLibrary.assets.object(at: index))
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        selectedPhoto = PhotoSelection(id: index)
+                                    }
+                                    .onAppear {
+                                        // Track which month is currently visible
+                                        visibleMonth = section.title
+                                    }
+                            }
+                        }
+                    }
                 }
+            }
+            .refreshable {
+                await photoLibrary.requestAuthorization()
+                await BackupEngine.shared.resyncSelection()
+            }
+
+            // Floating date overlay — large bold, no background
+            if !visibleMonth.isEmpty {
+                Text(visibleMonth)
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.primary.opacity(0.7))
+                    .padding(.leading, 16)
+                    .padding(.top, 6)
+                    .allowsHitTesting(false)
+                    .animation(.easeInOut(duration: 0.15), value: visibleMonth)
             }
         }
     }
+
+    // MARK: - Group photos by month
+
+    private struct MonthSection {
+        let title: String     // "April 2026"
+        let indices: [Int]    // indices into fetchResult
+    }
+
+    private func buildSections() -> [MonthSection] {
+        let count = photoLibrary.assets.count
+        guard count > 0 else { return [] }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM yyyy"
+
+        var sections: [MonthSection] = []
+        var currentTitle = ""
+        var currentIndices: [Int] = []
+
+        for i in 0..<count {
+            let asset = photoLibrary.assets.object(at: i)
+            let title = asset.creationDate.map { formatter.string(from: $0) } ?? "Unknown"
+
+            if title != currentTitle {
+                if !currentIndices.isEmpty {
+                    sections.append(MonthSection(title: currentTitle, indices: currentIndices))
+                }
+                currentTitle = title
+                currentIndices = [i]
+            } else {
+                currentIndices.append(i)
+            }
+        }
+        if !currentIndices.isEmpty {
+            sections.append(MonthSection(title: currentTitle, indices: currentIndices))
+        }
+        return sections
+    }
 }
+
+// MARK: - Thumbnail cell
 
 private struct ThumbnailCell: View {
     let asset: PHAsset
@@ -83,14 +194,6 @@ private struct ThumbnailCell: View {
         .clipped()
         .overlay(alignment: .bottomLeading) {
             HStack(spacing: 3) {
-                if let record = BackupBadge.record(for: asset.localIdentifier), let fc = record.faceCount, fc > 0 {
-                    Label("\(fc)", systemImage: "face.smiling")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(.black.opacity(0.55), in: Capsule())
-                }
                 if asset.mediaType == .video {
                     Image(systemName: "video.fill")
                         .font(.caption2)

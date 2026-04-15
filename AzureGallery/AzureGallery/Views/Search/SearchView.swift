@@ -73,11 +73,27 @@ struct SearchView: View {
                     .padding(.vertical, 8)
                 }
 
-                if results.isEmpty {
-                    ContentUnavailableView.search
+                if results.isEmpty && query.isEmpty && activeFilter == nil {
+                    ContentUnavailableView("Search Your Photos",
+                        systemImage: "magnifyingglass",
+                        description: Text("Type a query or tap a filter above to find photos by content."))
+                        .frame(maxHeight: .infinity)
+                } else if results.isEmpty {
+                    ContentUnavailableView("No Results",
+                        systemImage: "photo.on.rectangle.angled",
+                        description: Text("No photos match \"\(query.isEmpty ? activeFilter?.rawValue ?? "" : query)\". Try a different search."))
                         .frame(maxHeight: .infinity)
                 } else {
                     ScrollView {
+                        // Results count
+                        HStack {
+                            Text("\(results.count) result\(results.count == 1 ? "" : "s")")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .padding(.horizontal)
+                        .padding(.top, 4)
+
                         LazyVGrid(columns: columns, spacing: 2) {
                             ForEach(results) { record in
                                 SearchThumbnail(record: record)
