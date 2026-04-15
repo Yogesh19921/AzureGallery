@@ -107,13 +107,7 @@ enum CloudStorageFactory {
     }
 
     private static func makeS3() -> CloudStorageProvider? {
-        guard let accessKey = KeychainHelper.load(key: KeychainHelper.s3AccessKeyIdKey),
-              let secret = KeychainHelper.load(key: KeychainHelper.s3SecretAccessKeyKey),
-              let bucket = KeychainHelper.load(key: KeychainHelper.s3BucketKey),
-              let region = KeychainHelper.load(key: KeychainHelper.s3RegionKey) else {
-            return nil
-        }
-        let config = S3Config(accessKeyId: accessKey, secretAccessKey: secret, bucket: bucket, region: region)
+        guard let config = S3Config.fromKeychain() else { return nil }
         return S3BlobService(config: config)
     }
 

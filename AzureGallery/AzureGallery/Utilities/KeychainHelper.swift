@@ -68,6 +68,7 @@ extension KeychainHelper {
     static let s3SecretAccessKeyKey = "s3.secretAccessKey"
     static let s3BucketKey = "s3.bucket"
     static let s3RegionKey = "s3.region"
+    static let s3EndpointKey = "s3.endpoint"
 
     // Google Cloud Storage
     static let gcpAccessKeyKey = "gcp.accessKey"

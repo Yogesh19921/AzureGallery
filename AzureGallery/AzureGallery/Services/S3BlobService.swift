@@ -14,7 +14,7 @@ import CryptoKit
 struct S3BlobService: CloudStorageProvider {
     let config: S3Config
 
-    var providerName: String { "Amazon S3" }
+    var providerName: String { config.isCustomEndpoint ? "S3-Compatible" : "Amazon S3" }
 
     /// SHA-256 hash of an empty payload (used for GET/HEAD/DELETE requests).
     private static let emptyPayloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
