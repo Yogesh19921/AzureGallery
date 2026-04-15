@@ -8,7 +8,7 @@ import Foundation
 /// 2. Add a setup view for credentials
 /// 3. Register the provider in `CloudStorageFactory`
 protocol CloudStorageProvider {
-    /// Human-readable name for logs ("Azure", "Amazon S3", "Google Cloud").
+    /// Human-readable name for logs ("Azure", "S3 Compatible", "Google Cloud").
     var providerName: String { get }
 
     /// Build a signed URLRequest for a background upload task.
@@ -34,7 +34,7 @@ protocol CloudStorageProvider {
 
 enum CloudProviderType: String, CaseIterable, Identifiable {
     case azure = "Azure"
-    case s3    = "Amazon S3"
+    case s3    = "S3 Compatible"
     case gcp   = "Google Cloud"
 
     var id: String { rawValue }
