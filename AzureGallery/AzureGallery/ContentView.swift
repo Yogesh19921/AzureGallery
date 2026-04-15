@@ -1,9 +1,11 @@
 import SwiftUI
+import Combine
 
 struct ContentView: View {
     private let engine = BackupEngine.shared
 
     @State private var showLogShare = false
+    @State private var pendingBadge = 0
 
     /// Computes overall upload progress (0...1) from all active upload items.
     private var overallProgress: Double {
@@ -39,6 +41,7 @@ struct ContentView: View {
                         Label("Backup", systemImage: "cloud.fill")
                     }
                 }
+                .badge(pendingBadge > 0 ? pendingBadge : 0)
 
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gear") }
@@ -50,6 +53,9 @@ struct ContentView: View {
                     .frame(width: 0, height: 0)
                     .hidden()
             }
+        }
+        .onReceive(Timer.publish(every: 3, on: .main, in: .common).autoconnect()) { _ in
+            pendingBadge = (try? DatabaseService.shared.pendingCount()) ?? 0
         }
         .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in
             showLogShare = true

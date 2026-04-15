@@ -1,14 +1,6 @@
 import SwiftUI
 import Photos
 
-/// Three-screen onboarding walkthrough shown on first launch.
-///
-/// 1. Welcome  -- app icon & tagline
-/// 2. Photo Access -- explains permission, button to request
-/// 3. Azure Setup -- explains cloud connection, offers configuration
-///
-/// Sets `UserDefaults "hasCompletedOnboarding"` to `true` on completion so
-/// the flow is never shown again.
 struct OnboardingView: View {
     @Binding var hasCompletedOnboarding: Bool
     @State private var currentPage = 0
@@ -16,79 +8,98 @@ struct OnboardingView: View {
     @State private var photoAccessGranted = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            TabView(selection: $currentPage) {
-                welcomePage.tag(0)
-                photoAccessPage.tag(1)
-                azureSetupPage.tag(2)
+        ZStack {
+            // Gradient background
+            LinearGradient(
+                colors: [Color(.systemBackground), .blue.opacity(0.08)],
+                startPoint: .top, endPoint: .bottom
+            )
+            .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                TabView(selection: $currentPage) {
+                    welcomePage.tag(0)
+                    photoAccessPage.tag(1)
+                    cloudSetupPage.tag(2)
+                }
+                .tabViewStyle(.page(indexDisplayMode: .always))
+                .indexViewStyle(.page(backgroundDisplayMode: .always))
             }
-            .tabViewStyle(.page(indexDisplayMode: .always))
-            .indexViewStyle(.page(backgroundDisplayMode: .always))
         }
         .sheet(isPresented: $showAzureSetup) {
-            AzureSetupView()
+            NavigationStack {
+                AzureSetupView()
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showAzureSetup = false }
+                        }
+                    }
+            }
         }
     }
 
     // MARK: - Page 1: Welcome
 
     private var welcomePage: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 20) {
             Spacer()
 
             Image(systemName: "cloud.fill")
-                .font(.system(size: 60))
+                .font(.system(size: 72))
                 .foregroundStyle(.blue)
+                .symbolEffect(.pulse, options: .repeating)
 
             Text("AzureGallery")
-                .font(.title.bold())
+                .font(.largeTitle.bold())
 
-            Text("Your photos, safely backed up to Azure Cloud")
-                .font(.body)
+            Text("Your photos, backed up to\nyour own cloud storage")
+                .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
+
+            Text("10x cheaper than iCloud. You own the data.")
+                .font(.subheadline)
+                .foregroundStyle(.tertiary)
 
             Spacer()
+            Spacer()
 
-            Button {
-                withAnimation { currentPage = 1 }
-            } label: {
-                Text("Next")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .padding(.horizontal, 40)
-            .padding(.bottom, 60)
+            nextButton(page: 1)
         }
     }
 
     // MARK: - Page 2: Photo Access
 
     private var photoAccessPage: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 20) {
             Spacer()
 
             Image(systemName: "photo.on.rectangle.angled")
-                .font(.system(size: 60))
-                .foregroundStyle(.blue)
+                .font(.system(size: 72))
+                .foregroundStyle(.green)
 
             Text("Photo Access")
-                .font(.title.bold())
+                .font(.largeTitle.bold())
 
-            Text("AzureGallery needs access to your photo library to discover and back up your photos. Your photos stay on-device -- only copies are uploaded to your Azure storage.")
+            Text("AzureGallery needs access to your photo library to discover and back up your photos.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
+                .padding(.horizontal, 32)
+
+            Text("Your photos stay on-device.\nOnly copies are uploaded to your storage.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
 
             if photoAccessGranted {
                 Label("Access Granted", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .font(.headline)
+                    .padding(.top, 8)
             } else {
                 Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                     Task {
                         let status = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
                         await MainActor.run {
@@ -96,26 +107,20 @@ struct OnboardingView: View {
                         }
                     }
                 } label: {
-                    Text("Allow Access")
+                    Label("Allow Photo Access", systemImage: "photo.badge.checkmark")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(.green)
                 .controlSize(.large)
                 .padding(.horizontal, 40)
+                .padding(.top, 8)
             }
 
             Spacer()
+            Spacer()
 
-            Button {
-                withAnimation { currentPage = 2 }
-            } label: {
-                Text("Next")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .padding(.horizontal, 40)
-            .padding(.bottom, 60)
+            nextButton(page: 2)
         }
         .onAppear {
             let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
@@ -123,51 +128,45 @@ struct OnboardingView: View {
         }
     }
 
-    // MARK: - Page 3: Azure Setup
+    // MARK: - Page 3: Cloud Setup
 
-    private var azureSetupPage: some View {
-        VStack(spacing: 24) {
+    private var cloudSetupPage: some View {
+        VStack(spacing: 20) {
             Spacer()
 
-            Image(systemName: "server.rack")
-                .font(.system(size: 60))
-                .foregroundStyle(.blue)
+            Image(systemName: "cloud.bolt.fill")
+                .font(.system(size: 72))
+                .foregroundStyle(.orange)
 
-            Text("Azure Setup")
-                .font(.title.bold())
+            Text("Connect Your Cloud")
+                .font(.largeTitle.bold())
 
-            Text("Connect your Azure Blob Storage account to start backing up. You can also configure this later in Settings.")
+            Text("Set up Azure, Amazon S3, or Google Cloud.\nOr skip and configure later in Settings.")
                 .font(.body)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
+                .padding(.horizontal, 32)
 
             Button {
                 showAzureSetup = true
             } label: {
-                Text("Configure Azure")
+                Label("Configure Now", systemImage: "gear")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .padding(.horizontal, 40)
-
-            Button {
-                completeOnboarding()
-            } label: {
-                Text("Skip for Now")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
+            .tint(.orange)
             .controlSize(.large)
             .padding(.horizontal, 40)
 
             Spacer()
+            Spacer()
 
             Button {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 completeOnboarding()
             } label: {
                 Text("Get Started")
+                    .font(.headline)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
@@ -178,6 +177,20 @@ struct OnboardingView: View {
     }
 
     // MARK: - Helpers
+
+    private func nextButton(page: Int) -> some View {
+        Button {
+            withAnimation { currentPage = page }
+        } label: {
+            Text("Continue")
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.large)
+        .padding(.horizontal, 40)
+        .padding(.bottom, 60)
+    }
 
     private func completeOnboarding() {
         hasCompletedOnboarding = true

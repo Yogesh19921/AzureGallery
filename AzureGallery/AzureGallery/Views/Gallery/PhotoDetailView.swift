@@ -52,20 +52,44 @@ struct PhotoDetailView: View {
                     Text("\(currentIndex + 1) / \(fetchResult.count)")
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.8))
+                        .padding(.trailing, 16)
                         .padding(.top, 8)
-
-                    // Info button — always available, no gesture needed
-                    Button { showMetadata = true } label: {
-                        Image(systemName: "info.circle")
-                            .font(.title3)
-                            .foregroundStyle(.white)
-                            .padding(10)
-                            .background(.black.opacity(0.5), in: Circle())
-                    }
-                    .padding(.trailing, 16)
-                    .padding(.top, 8)
                 }
                 Spacer()
+
+                // Bottom toolbar
+                HStack(spacing: 0) {
+                    let asset = fetchResult.object(at: currentIndex)
+
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        asset.toggleFavorite()
+                    } label: {
+                        Image(systemName: asset.isFavorite ? "heart.fill" : "heart")
+                            .foregroundStyle(asset.isFavorite ? .red : .white)
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    Button {
+                        showMetadata = true
+                    } label: {
+                        Image(systemName: "info.circle")
+                            .foregroundStyle(.white)
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    Button {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        deleteAsset(asset)
+                    } label: {
+                        Image(systemName: "trash")
+                            .foregroundStyle(.white)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .font(.title3)
+                .padding(.vertical, 12)
+                .background(.black.opacity(0.5))
             }
         }
         // simultaneousGesture so TabView paging (horizontal) still works.
@@ -97,6 +121,23 @@ struct PhotoDetailView: View {
                 .presentationBackground(.ultraThinMaterial)
         }
         .statusBarHidden()
+    }
+
+    private func deleteAsset(_ asset: PHAsset) {
+        PHPhotoLibrary.shared().performChanges {
+            PHAssetChangeRequest.deleteAssets([asset] as NSArray)
+        } completionHandler: { success, _ in
+            if success { DispatchQueue.main.async { dismiss() } }
+        }
+    }
+}
+
+private extension PHAsset {
+    func toggleFavorite() {
+        PHPhotoLibrary.shared().performChanges {
+            let request = PHAssetChangeRequest(for: self)
+            request.isFavorite = !self.isFavorite
+        }
     }
 }
 

@@ -60,6 +60,7 @@ struct GalleryView: View {
 
     private var photoGrid: some View {
         ZStack(alignment: .topLeading) {
+            Color.black.ignoresSafeArea()
             ScrollView {
                 VStack(spacing: 0) {
                     // Backup progress banner
@@ -85,27 +86,31 @@ struct GalleryView: View {
                     // Photo grid grouped by month
                     let sections = buildSections()
                     ForEach(sections, id: \.title) { section in
-                        // Month header — inline
-                        HStack {
-                            Text(section.title)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text("\(section.indices.count)")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        }
-                        .padding(.horizontal)
-                        .padding(.top, 20)
-                        .padding(.bottom, 8)
-
-                        // Photos in this month
                         LazyVGrid(columns: columns, spacing: 2) {
                             ForEach(section.indices, id: \.self) { index in
-                                ThumbnailCell(asset: photoLibrary.assets.object(at: index))
+                                let asset = photoLibrary.assets.object(at: index)
+                                ThumbnailCell(asset: asset)
                                     .contentShape(Rectangle())
                                     .onTapGesture {
+                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                                         selectedPhoto = PhotoSelection(id: index)
+                                    }
+                                    .contextMenu {
+                                        let status = BackupBadge.record(for: asset.localIdentifier)?.status
+                                        Label(status == .uploaded ? "Backed Up" : status == .pending ? "Pending Upload" : "Not Backed Up",
+                                              systemImage: status == .uploaded ? "checkmark.icloud.fill" : "icloud")
+
+                                        Button {
+                                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                            asset.toggleFavorite()
+                                        } label: {
+                                            Label(asset.isFavorite ? "Unfavorite" : "Favorite",
+                                                  systemImage: asset.isFavorite ? "heart.slash" : "heart")
+                                        }
+
+                                        ShareLink(item: asset.localIdentifier) {
+                                            Label("Share", systemImage: "square.and.arrow.up")
+                                        }
                                     }
                                     .onAppear {
                                         // Track which month is currently visible
@@ -228,6 +233,17 @@ private struct ThumbnailCell: View {
             if let result {
                 DispatchQueue.main.async { thumbnail = result }
             }
+        }
+    }
+}
+
+// MARK: - PHAsset helpers
+
+private extension PHAsset {
+    func toggleFavorite() {
+        PHPhotoLibrary.shared().performChanges {
+            let request = PHAssetChangeRequest(for: self)
+            request.isFavorite = !self.isFavorite
         }
     }
 }
