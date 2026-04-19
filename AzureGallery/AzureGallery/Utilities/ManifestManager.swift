@@ -78,17 +78,14 @@ final class ManifestManager {
             assets: entries
         )
         guard let data = try? JSONEncoder().encode(manifest) else { return }
-        let tmpURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("manifest.json")
-        try? data.write(to: tmpURL)
         let service = AzureBlobService(config: config)
         if let request = try? service.uploadRequest(
             blobName: blobPath,
             contentType: "application/json",
             fileSize: Int64(data.count)
         ) {
-            // Fire-and-forget upload — non-critical
-            URLSession.shared.uploadTask(with: request, fromFile: tmpURL).resume()
+            // Fire-and-forget upload — non-critical. Upload from Data to avoid a temp file.
+            URLSession.shared.uploadTask(with: request, from: data).resume()
         }
     }
 

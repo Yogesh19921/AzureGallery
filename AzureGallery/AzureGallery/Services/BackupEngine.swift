@@ -25,6 +25,11 @@ struct ActiveUploadItem: Identifiable {
 /// Persisted so the mapping survives app termination between upload and delegate callback.
 private let taskMapKey = "BackupEngine.taskMap"
 
+/// UserDefaults key: maps URLSession taskIdentifier (String) → temp file path (String).
+/// Persisted so we can delete the temp file after the background upload completes,
+/// even if the app was terminated between task.resume() and the delegate callback.
+private let taskTempURLMapKey = "BackupEngine.taskTempURLMap"
+
 /// Coordinates the full backup lifecycle: scanning the photo library, queuing new assets,
 /// and uploading them to Azure Blob Storage via a background URLSession.
 ///
@@ -62,12 +67,68 @@ final class BackupEngine: NSObject {
         set { UserDefaults.standard.set(newValue, forKey: taskMapKey) }
     }
 
+    /// Persisted map: `"\(taskIdentifier)"` → temp file path. Survives app termination.
+    private var taskTempURLMap: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: taskTempURLMapKey) as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: taskTempURLMapKey) }
+    }
+
     private override init() {
         super.init()
         let config = URLSessionConfiguration.background(withIdentifier: backgroundSessionIdentifier)
         config.isDiscretionary = false
         config.sessionSendsLaunchEvents = true
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+        _ = cleanupOrphanedTempFiles()
+    }
+
+    // MARK: - Temp File Cleanup
+
+    /// Removes files in the app's `temporaryDirectory` that are not referenced by an
+    /// in-flight background upload task. iOS does **not** auto-delete source files after
+    /// background URLSession uploads, so leftovers from completed/crashed uploads pile up.
+    /// Safe to call at any time — files currently being uploaded are preserved via
+    /// `taskTempURLMap`. Returns the number of files removed and bytes freed.
+    @discardableResult
+    func cleanupOrphanedTempFiles() -> (removed: Int, bytesFreed: Int64) {
+        let tracked = Set(taskTempURLMap.values)
+        let tmp = FileManager.default.temporaryDirectory
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: tmp,
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else { return (0, 0) }
+
+        var removed = 0
+        var bytesFreed: Int64 = 0
+        for url in contents {
+            if tracked.contains(url.path) { continue }
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+            if (try? FileManager.default.removeItem(at: url)) != nil {
+                removed += 1
+                bytesFreed += size
+            }
+        }
+        if removed > 0 {
+            let freed = ByteCountFormatter.string(fromByteCount: bytesFreed, countStyle: .file)
+            DispatchQueue.main.async {
+                AppLogger.shared.info("Cleaned \(removed) orphaned temp files — freed \(freed)", tag: "BackupEngine")
+            }
+        }
+        return (removed, bytesFreed)
+    }
+
+    /// Total size (bytes) of files currently in the app's `temporaryDirectory`.
+    func currentTempCacheSize() -> Int64 {
+        let tmp = FileManager.default.temporaryDirectory
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: tmp,
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else { return 0 }
+        return contents.reduce(0) { acc, url in
+            acc + ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0)
+        }
     }
 
     /// Called from `AzureGalleryApp` when iOS re-launches the app to deliver background session events.
@@ -406,10 +467,14 @@ final class BackupEngine: NSObject {
             }
 
             let task = session.uploadTask(with: uploadRequest, fromFile: tempURL)
-            tempFileHandedOff = true  // URLSession now owns the file
+            tempFileHandedOff = true  // delegate callback will delete tempURL
+            let taskKey = String(task.taskIdentifier)
             var map = taskMap
-            map[String(task.taskIdentifier)] = record.assetId
+            map[taskKey] = record.assetId
             taskMap = map
+            var tempMap = taskTempURLMap
+            tempMap[taskKey] = tempURL.path
+            taskTempURLMap = tempMap
             activeUploads += 1
             // Update the existing item with file size and clear iCloud progress
             activeUploadItems[record.assetId]?.totalBytes = fileSize
@@ -528,6 +593,14 @@ extension BackupEngine: URLSessionDelegate, URLSessionTaskDelegate {
         map.removeValue(forKey: key)
         taskMap = map
 
+        // Delete the exported temp file — iOS does NOT auto-clean source files for
+        // background URLSession uploads. Leak here = 20 GB of tmp after a full library backup.
+        var tempMap = taskTempURLMap
+        if let tempPath = tempMap.removeValue(forKey: key) {
+            try? FileManager.default.removeItem(atPath: tempPath)
+        }
+        taskTempURLMap = tempMap
+
         // Always decrement — even if assetId is unknown. Guarding before this was the
         // "stuck uploading" bug: counter would never reach 0 when taskMap lost an entry.
         DispatchQueue.main.async {
@@ -568,7 +641,6 @@ extension BackupEngine: URLSessionDelegate, URLSessionTaskDelegate {
             }
             try? db.updateStatus(assetId: assetId, status: .uploaded)
             DispatchQueue.main.async { BackupBadge.invalidate() }
-            // Background URLSession temp files are cleaned up by the OS after delegate callback.
 
             // Keep widget data fresh after each successful upload
             BackupWidgetData.current().save()

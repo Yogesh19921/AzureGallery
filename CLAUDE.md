@@ -51,7 +51,7 @@ PHAsset → FileExporter (temp file) → SHA-256 hash → dedup check → HEAD c
 
 `CloudStorageProvider` protocol abstracts all cloud operations. Three implementations:
 - `AzureBlobService` — Shared Key (HMAC-SHA256), REST API
-- `S3BlobService` — AWS Signature V4, virtual-hosted URLs
+- `S3BlobService` — AWS Signature V4. Serves **all S3-compatible providers** (AWS S3, Backblaze B2, Cloudflare R2, Wasabi, MinIO, etc.) via `S3Config.customEndpoint`. When `customEndpoint` is nil → virtual-hosted AWS URL; when set → path-style `https://endpoint/bucket`. Presets live in `S3Config` (`endpointTemplate` per preset).
 - `GCPBlobService` — HMAC keys (S3-compatible signing), path-style URLs
 
 `CloudStorageFactory.makeAllEnabled()` returns all configured+enabled providers. Primary provider uses background URLSession. After success, `mirrorToSecondaryProviders()` uploads to additional providers via foreground URLSession.
@@ -149,8 +149,8 @@ AppLoggerTests, AzureBlobServiceTests, AzureConfigTests, BackgroundTaskServiceTe
 - Large file handling (skip over configurable size unless wifi + charging)
 
 ### Platform
-- Backblaze B2 (S3-compatible, even cheaper)
-- MinIO / self-hosted S3
 - WebDAV (Nextcloud, Synology NAS)
 - SFTP (any Linux server)
 - Android version (Kotlin, same cloud backends)
+
+(Backblaze B2, Cloudflare R2, Wasabi, MinIO now supported via `S3BlobService` + `customEndpoint`.)

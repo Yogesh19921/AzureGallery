@@ -17,6 +17,8 @@ struct SettingsView: View {
     @State private var activeProviderCount = 0
     @State private var isAnalyzing = false
     @State private var analysisText = ""
+    @State private var tempCacheBytes: Int64 = 0
+    @State private var showClearCacheConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -108,6 +110,18 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                    Button {
+                        showClearCacheConfirm = true
+                    } label: {
+                        HStack {
+                            Label("Clear Cache", systemImage: "trash")
+                            Spacer()
+                            Text(ByteCountFormatter.string(fromByteCount: tempCacheBytes, countStyle: .file))
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                        }
+                    }
+                    .disabled(tempCacheBytes == 0)
                     NavigationLink {
                         LogsView()
                     } label: {
@@ -123,9 +137,11 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             .task {
                 activeProviderCount = CloudProviderType.allCases.filter { $0.isConfigured && $0.isEnabled }.count
+                tempCacheBytes = BackupEngine.shared.currentTempCacheSize()
             }
             .onAppear {
                 activeProviderCount = CloudProviderType.allCases.filter { $0.isConfigured && $0.isEnabled }.count
+                tempCacheBytes = BackupEngine.shared.currentTempCacheSize()
             }
             .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
                 let ap = BackupEngine.analysisProgress
@@ -144,6 +160,19 @@ struct SettingsView: View {
                     try? DatabaseService.shared.resetFailedToPending()
                     Task { await BackupEngine.shared.processQueue() }
                 }
+            }
+            .confirmationDialog(
+                "Clear \(ByteCountFormatter.string(fromByteCount: tempCacheBytes, countStyle: .file)) of cached upload files?",
+                isPresented: $showClearCacheConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Clear", role: .destructive) {
+                    let result = BackupEngine.shared.cleanupOrphanedTempFiles()
+                    tempCacheBytes = BackupEngine.shared.currentTempCacheSize()
+                    AppLogger.shared.info("Manual cache clear — removed \(result.removed) files, freed \(ByteCountFormatter.string(fromByteCount: result.bytesFreed, countStyle: .file))", tag: "Settings")
+                }
+            } message: {
+                Text("In-flight uploads are preserved.")
             }
         }
     }
