@@ -4,7 +4,7 @@ import MapKit
 import AVKit
 
 struct PhotoDetailView: View {
-    let fetchResult: PHFetchResult<PHAsset>
+    let assets: [PHAsset]
     @State var currentIndex: Int
     @Environment(\.dismiss) private var dismiss
 
@@ -17,8 +17,8 @@ struct PhotoDetailView: View {
 
             // Paging viewer
             TabView(selection: $currentIndex) {
-                ForEach(0..<fetchResult.count, id: \.self) { index in
-                    ZoomableImageView(asset: fetchResult.object(at: index))
+                ForEach(0..<assets.count, id: \.self) { index in
+                    ZoomableImageView(asset: assets[index])
                         .tag(index)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -49,7 +49,7 @@ struct PhotoDetailView: View {
 
                     Spacer()
 
-                    Text("\(currentIndex + 1) / \(fetchResult.count)")
+                    Text("\(currentIndex + 1) / \(assets.count)")
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.8))
                         .padding(.trailing, 16)
@@ -59,7 +59,7 @@ struct PhotoDetailView: View {
 
                 // Bottom toolbar
                 HStack(spacing: 0) {
-                    let asset = fetchResult.object(at: currentIndex)
+                    let asset = assets[currentIndex]
 
                     Button {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -115,7 +115,7 @@ struct PhotoDetailView: View {
                 }
         )
         .sheet(isPresented: $showMetadata) {
-            MetadataSheet(asset: fetchResult.object(at: currentIndex))
+            MetadataSheet(asset: assets[currentIndex])
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(.ultraThinMaterial)

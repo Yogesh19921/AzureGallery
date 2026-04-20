@@ -30,8 +30,12 @@ struct AlbumDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(item: $selectedPhoto) { selection in
             if let result = fetchResult {
-                PhotoDetailView(fetchResult: result, currentIndex: selection.id)
+                var arr: [PHAsset] = []
+                arr.reserveCapacity(result.count)
+                result.enumerateObjects { asset, _, _ in arr.append(asset) }
+                return AnyView(PhotoDetailView(assets: arr, currentIndex: selection.id))
             }
+            return AnyView(EmptyView())
         }
         .onAppear {
             let options = PHFetchOptions()

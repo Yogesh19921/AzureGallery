@@ -3,7 +3,7 @@ import Photos
 
 private struct SearchSelection: Identifiable {
     let id: String
-    let fetchResult: PHFetchResult<PHAsset>
+    let assets: [PHAsset]
     let index: Int
 }
 
@@ -106,15 +106,22 @@ struct SearchView: View {
             }
             .navigationTitle("Search")
             .fullScreenCover(item: $selectedPhoto) { selection in
-                PhotoDetailView(fetchResult: selection.fetchResult, currentIndex: selection.index)
+                PhotoDetailView(assets: selection.assets, currentIndex: selection.index)
             }
         }
     }
 
+    /// Build a flat PHAsset list preserving `results` order so swipe-next/prev
+    /// moves through the full search result set, not just the tapped photo.
     private func openPhoto(_ record: BackupRecord) {
-        let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [record.assetId], options: nil)
-        guard fetchResult.count > 0 else { return }
-        selectedPhoto = SearchSelection(id: record.assetId, fetchResult: fetchResult, index: 0)
+        let allIds = results.map(\.assetId)
+        let fetch = PHAsset.fetchAssets(withLocalIdentifiers: allIds, options: nil)
+        // PHAsset.fetchAssets ordering is undefined — bucket by id then re-order to match `results`.
+        var byId: [String: PHAsset] = [:]
+        fetch.enumerateObjects { asset, _, _ in byId[asset.localIdentifier] = asset }
+        let ordered = results.compactMap { byId[$0.assetId] }
+        guard let tapIndex = ordered.firstIndex(where: { $0.localIdentifier == record.assetId }) else { return }
+        selectedPhoto = SearchSelection(id: record.assetId, assets: ordered, index: tapIndex)
     }
 
     private func search() {

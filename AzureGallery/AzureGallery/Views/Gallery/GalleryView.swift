@@ -4,7 +4,9 @@ import Combine
 
 // Identifiable wrapper so we can use fullScreenCover(item:)
 private struct PhotoSelection: Identifiable {
-    let id: Int // index into fetchResult
+    let id: String               // tapped asset's localIdentifier
+    let assets: [PHAsset]        // full flat list in grid order
+    let startIndex: Int          // index of tapped asset in `assets`
 }
 
 struct GalleryView: View {
@@ -49,7 +51,7 @@ struct GalleryView: View {
             .navigationTitle("Gallery")
             .toolbarTitleDisplayMode(.inlineLarge)
             .fullScreenCover(item: $selectedPhoto) { selection in
-                PhotoDetailView(fetchResult: photoLibrary.assets, currentIndex: selection.id)
+                PhotoDetailView(assets: selection.assets, currentIndex: selection.startIndex)
             }
             .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
                 activeUploads = BackupEngine.shared.activeUploads
@@ -83,17 +85,23 @@ struct GalleryView: View {
                         .background(.ultraThinMaterial)
                     }
 
-                    // Photo grid grouped by month
-                    let sections = buildSections()
+                    // Photo grid grouped by month. `assetList` is a flat snapshot
+                    // of photoLibrary.assets so tap → detail view gets a stable ordering.
+                    let assetList = flatAssets()
+                    let sections = buildSections(from: assetList)
                     ForEach(sections, id: \.title) { section in
                         LazyVGrid(columns: columns, spacing: 2) {
-                            ForEach(section.indices, id: \.self) { index in
-                                let asset = photoLibrary.assets.object(at: index)
+                            ForEach(section.assets, id: \.localIdentifier) { asset in
                                 ThumbnailCell(asset: asset)
                                     .contentShape(Rectangle())
                                     .onTapGesture {
                                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                        selectedPhoto = PhotoSelection(id: index)
+                                        let idx = assetList.firstIndex { $0.localIdentifier == asset.localIdentifier } ?? 0
+                                        selectedPhoto = PhotoSelection(
+                                            id: asset.localIdentifier,
+                                            assets: assetList,
+                                            startIndex: idx
+                                        )
                                     }
                                     .contextMenu {
                                         let status = BackupBadge.record(for: asset.localIdentifier)?.status
@@ -142,37 +150,44 @@ struct GalleryView: View {
     // MARK: - Group photos by month
 
     private struct MonthSection {
-        let title: String     // "April 2026"
-        let indices: [Int]    // indices into fetchResult
+        let title: String         // "April 2026"
+        let assets: [PHAsset]
     }
 
-    private func buildSections() -> [MonthSection] {
-        let count = photoLibrary.assets.count
-        guard count > 0 else { return [] }
+    /// Flat snapshot of `photoLibrary.assets`. Accessing the @Observable property
+    /// from here (via `body`) registers this view for re-render on library changes.
+    private func flatAssets() -> [PHAsset] {
+        let fetched = photoLibrary.assets
+        var arr: [PHAsset] = []
+        arr.reserveCapacity(fetched.count)
+        fetched.enumerateObjects { asset, _, _ in arr.append(asset) }
+        return arr
+    }
+
+    private func buildSections(from assets: [PHAsset]) -> [MonthSection] {
+        guard !assets.isEmpty else { return [] }
 
         let formatter = DateFormatter()
         formatter.dateFormat = "MMMM yyyy"
 
         var sections: [MonthSection] = []
         var currentTitle = ""
-        var currentIndices: [Int] = []
+        var currentAssets: [PHAsset] = []
 
-        for i in 0..<count {
-            let asset = photoLibrary.assets.object(at: i)
+        for asset in assets {
             let title = asset.creationDate.map { formatter.string(from: $0) } ?? "Unknown"
-
             if title != currentTitle {
-                if !currentIndices.isEmpty {
-                    sections.append(MonthSection(title: currentTitle, indices: currentIndices))
+                if !currentAssets.isEmpty {
+                    sections.append(MonthSection(title: currentTitle, assets: currentAssets))
                 }
                 currentTitle = title
-                currentIndices = [i]
+                currentAssets = [asset]
             } else {
-                currentIndices.append(i)
+                currentAssets.append(asset)
             }
         }
-        if !currentIndices.isEmpty {
-            sections.append(MonthSection(title: currentTitle, indices: currentIndices))
+        if !currentAssets.isEmpty {
+            sections.append(MonthSection(title: currentTitle, assets: currentAssets))
         }
         return sections
     }
